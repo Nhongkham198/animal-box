@@ -1,0 +1,250 @@
+{
+  "entities": {
+    "User": {
+      "title": "Staff User",
+      "description": "Clinic staff members including doctors and admins.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "name": { "type": "string", "description": "Full name" },
+        "role": { "type": "string", "enum": ["admin", "doctor", "staff"], "description": "Staff role" },
+        "email": { "type": "string", "format": "email" },
+        "prefix": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "licenseNumber": { "type": "string" },
+        "address": { "type": "string" },
+        "tel": { "type": "string" },
+        "pin": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive"] }
+      },
+      "required": ["uid", "name", "role", "email"]
+    },
+    "Patient": {
+      "title": "Pet Patient",
+      "description": "Pet information and medical history.",
+      "type": "object",
+      "properties": {
+        "hn": { "type": "string", "description": "Hospital Number" },
+        "name": { "type": "string" },
+        "species": { "type": "string" },
+        "breed": { "type": "string" },
+        "ownerIds": { "type": "array", "items": { "type": "string" }, "description": "List of owner IDs" },
+        "photoURL": { "type": "string" },
+        "birthDate": { "type": "string", "format": "date" },
+        "medicalHistory": { 
+          "type": "array",
+          "items": { 
+            "type": "object",
+            "properties": {
+              "date": { "type": "string", "format": "date-time" },
+              "diagnosis": { "type": "string" },
+              "treatment": { "type": "string" }
+            }
+          }
+        },
+        "vaccineRecords": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "date": { "type": "string", "format": "date-time" },
+              "nextDate": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "nextVaccineDate": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "species", "ownerIds"]
+    },
+    "Owner": {
+      "title": "Pet Owner",
+      "description": "Contact information for pet owners.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "address": { "type": "string" },
+        "citizenId": { "type": "string", "description": "Thai Citizen ID (13 digits)" },
+        "photoURL": { "type": "string", "description": "Base64 encoded photo from ID card" },
+        "petIds": { "type": "array", "items": { "type": "string" }, "description": "List of pet IDs" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "phone"]
+    },
+    "Appointment": {
+      "title": "Booking Appointment",
+      "description": "Scheduled appointments for patients.",
+      "type": "object",
+      "properties": {
+        "patientId": { "type": "string" },
+        "patientName": { "type": "string" },
+        "doctorId": { "type": "string" },
+        "doctorName": { "type": "string" },
+        "serviceType": { "type": "string" },
+        "startTime": { "type": "string", "format": "date-time" },
+        "endTime": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "completed", "cancelled"] },
+        "depositPaid": { "type": "boolean" }
+      },
+      "required": ["patientId", "doctorId", "startTime", "status"]
+    },
+    "InventoryItem": {
+      "title": "Inventory Item",
+      "description": "Medicines and supplies in stock.",
+      "type": "object",
+      "properties": {
+        "itemName": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unitPrice": { "type": "number" },
+        "minStock": { "type": "number" }
+      },
+      "required": ["itemName", "quantity", "unitPrice"]
+    },
+    "Microchip": {
+      "title": "Microchip Record",
+      "description": "Microchip numbers and associated pet/owner information.",
+      "type": "object",
+      "properties": {
+        "number": { "type": "string", "description": "Microchip unique number" },
+        "petName": { "type": "string", "description": "Name of the pet" },
+        "ownerName": { "type": "string", "description": "Name of the owner" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["number", "petName", "ownerName"]
+    },
+    "OPDRecord": {
+      "title": "OPD Medical Record",
+      "description": "Outpatient department medical records.",
+      "type": "object",
+      "properties": {
+        "dateVisit": { "type": "string", "format": "date-time" },
+        "patientId": { "type": "string" },
+        "petName": { "type": "string" },
+        "status": { "type": "string" },
+        "category": { "type": "string", "enum": ["Treatment", "Grooming", "Vaccine", "Other"] },
+        "finalDiagnosis": { "type": "string" },
+        "revenue": { "type": "number" },
+        "attachments": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "quantity": { "type": "number" },
+              "price": { "type": "number" },
+              "category": { "type": "string" }
+            }
+          }
+        }
+      },
+      "required": ["dateVisit", "petName", "status", "revenue"]
+    },
+    "Expense": {
+      "title": "Clinic Expense",
+      "description": "General clinic expenses for accounting.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date-time" },
+        "description": { "type": "string" },
+        "amount": { "type": "number" },
+        "category": { "type": "string" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["date", "description", "amount", "category"]
+    },
+    "PublicBooking": {
+      "title": "Public Appointment Request",
+      "description": "Appointments requested via public link (e.g. Facebook).",
+      "type": "object",
+      "properties": {
+        "ownerName": { "type": "string" },
+        "ownerPhone": { "type": "string" },
+        "petName": { "type": "string" },
+        "petSpecies": { "type": "string" },
+        "requestedDate": { "type": "string", "format": "date-time" },
+        "serviceType": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerName", "ownerPhone", "requestedDate", "status"]
+    },
+    "Sale": {
+      "title": "Point of Sale Record",
+      "description": "Transaction records for billing.",
+      "type": "object",
+      "properties": {
+        "items": { "type": "array" },
+        "total": { "type": "number" },
+        "patientIds": { "type": "array", "items": { "type": "string" } },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["items", "total", "createdAt"]
+    },
+    "Setting": {
+      "title": "Application Setting",
+      "description": "Configurable lists and settings for the app.",
+      "type": "object",
+      "properties": {
+        "values": { "type": "array", "items": { "type": "string" } },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["values"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "Staff profile data."
+    },
+    "/patients/{patientId}": {
+      "schema": "Patient",
+      "description": "Pet patient records."
+    },
+    "/owners/{ownerId}": {
+      "schema": "Owner",
+      "description": "Pet owner records."
+    },
+    "/appointments/{appointmentId}": {
+      "schema": "Appointment",
+      "description": "Clinic appointments."
+    },
+    "/inventory/{itemId}": {
+      "schema": "InventoryItem",
+      "description": "Inventory stock levels."
+    },
+    "/microchips/{chipId}": {
+      "schema": "Microchip",
+      "description": "Microchip registry."
+    },
+    "/opd_records/{recordId}": {
+      "schema": "OPDRecord",
+      "description": "OPD medical history."
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Clinic expenses."
+    },
+    "/public_bookings/{bookingId}": {
+      "schema": "PublicBooking",
+      "description": "Public appointment requests."
+    },
+    "/sales/{saleId}": {
+      "schema": "Sale",
+      "description": "Sales and billing records."
+    },
+    "/settings/{settingId}": {
+      "schema": "Setting",
+      "description": "Application configuration and lists."
+    }
+  }
+}

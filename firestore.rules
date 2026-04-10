@@ -1,0 +1,370 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {uid}
+    // Fields:
+    //   - uid: string (required) - Auth UID
+    //   - name: string (required) - Full name
+    //   - role: string (required, enum: ["admin", "doctor", "staff"]) - Staff role
+    //   - email: string (required, email format) - Staff email
+    //
+    // Collection: settings
+    // Document ID: settingId (e.g., 'pet_species')
+    // Fields:
+    //   - values: list (required) - List of string values
+    //   - updatedAt: timestamp (optional) - Last update time
+    //
+    // Global Admin Override
+    match /{path=**} {
+      allow read, write: if request.auth != null && (
+        request.auth.uid == "wbqwrJp7wgQwUvxwWC1mxy77DTf2" || 
+        request.auth.token.email == "zowamarketing@gmail.com"
+      );
+    }
+
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    // Collection: owners
+    // Document ID: {ownerId}
+    // Fields:
+    //   - name: string (required)
+    //   - phone: string (required)
+    //   - email: string (optional)
+    //   - address: string (optional)
+    //   - petIds: list (optional) - List of pet IDs
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: patients
+    // Document ID: {patientId}
+    // Fields:
+    //   - hn: string (optional) - Hospital Number
+    //   - name: string (required) - Pet name
+    //   - species: string (required) - Pet species
+    //   - breed: string (optional) - Pet breed
+    //   - ownerIds: list (required) - List of owner IDs
+    //   - photoURL: string (optional) - Pet photo
+    //   - birthDate: string (optional) - YYYY-MM-DD
+    //   - medicalHistory: list (optional) - List of {date, diagnosis, treatment}
+    //   - vaccineRecords: list (optional) - List of {name, date, nextDate}
+    //   - nextVaccineDate: timestamp (optional)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: appointments
+    // Document ID: {appointmentId}
+    // Fields:
+    //   - patientId: string (required)
+    //   - patientName: string (required)
+    //   - doctorId: string (required)
+    //   - doctorName: string (required)
+    //   - serviceType: string (required)
+    //   - startTime: timestamp (required)
+    //   - endTime: timestamp (required)
+    //   - status: string (required, enum: ["pending", "confirmed", "completed", "cancelled"])
+    //   - depositPaid: bool (required)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: inventory
+    // Document ID: {itemId}
+    // Fields:
+    //   - itemName: string (required) - Item name
+    //   - quantity: number (required) - Current stock
+    //   - unitPrice: number (required) - Price per unit
+    //   - minStock: number (required) - Minimum stock alert level
+    //   - category: string (optional)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: sales
+    // Document ID: {saleId}
+    // Fields:
+    //   - items: list (required) - List of {id, name, quantity, price}
+    //   - total: number (required)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: microchips
+    // Document ID: {chipId}
+    // Fields:
+    //   - number: string (required)
+    //   - petName: string (required)
+    //   - ownerName: string (required)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: opd_records
+    // Document ID: {recordId}
+    // Fields:
+    //   - dateVisit: timestamp (required)
+    //   - patientId: string (optional)
+    //   - petName: string (required)
+    //   - status: string (required)
+    //   - category: string (optional, enum: ["Treatment", "Grooming", "Vaccine", "Other"])
+    //   - finalDiagnosis: string (optional)
+    //   - revenue: number (required)
+    //   - attachments: list (optional) - List of file URLs
+    //   - items: list (optional) - List of {id, name, quantity, price, category}
+    //
+    // Collection: expenses
+    // Document ID: {expenseId}
+    // Fields:
+    //   - date: timestamp (required)
+    //   - description: string (required)
+    //   - amount: number (required)
+    //   - category: string (required)
+    //   - createdBy: string (required)
+    //
+    // Collection: public_bookings
+    // Document ID: {bookingId}
+    // Fields:
+    //   - ownerName: string (required)
+    //   - ownerPhone: string (required)
+    //   - petName: string (optional)
+    //   - petSpecies: string (optional)
+    //   - requestedDate: timestamp (required)
+    //   - serviceType: string (optional)
+    //   - status: string (required, enum: ["pending", "approved", "rejected"])
+    //   - createdAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return request.auth != null && (
+        request.auth.uid == "wbqwrJp7wgQwUvxwWC1mxy77DTf2" ||
+        request.auth.token.email == "zowamarketing@gmail.com"
+      );
+    }
+
+    function isStaff() {
+      return isAdmin() || (
+        isAuthenticated() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'doctor', 'staff', 'vet']
+      );
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['uid', 'name', 'role', 'email', 'prefix', 'firstName', 'lastName', 'licenseNumber', 'address', 'tel', 'pin', 'status']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.role in ['admin', 'doctor', 'staff'] &&
+             isValidEmail(data.email) &&
+             (!('prefix' in data) || data.prefix is string) &&
+             (!('firstName' in data) || data.firstName is string) &&
+             (!('lastName' in data) || data.lastName is string) &&
+             (!('licenseNumber' in data) || data.licenseNumber is string) &&
+             (!('address' in data) || data.address is string) &&
+             (!('tel' in data) || data.tel is string) &&
+             (!('pin' in data) || data.pin is string) &&
+             (!('status' in data) || data.status in ['active', 'inactive']);
+    }
+
+    function isValidPatient(data) {
+      return hasOnlyAllowedFields(['hn', 'name', 'species', 'breed', 'ownerIds', 'photoURL', 'birthDate', 'medicalHistory', 'vaccineRecords', 'nextVaccineDate', 'createdAt']) &&
+             (!('hn' in data) || data.hn is string) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 50 &&
+             data.species is string && data.species.size() > 0 &&
+             data.ownerIds is list && data.ownerIds.size() > 0 &&
+             (!('photoURL' in data) || data.photoURL is string) &&
+             (!('birthDate' in data) || data.birthDate is string) &&
+             (!('medicalHistory' in data) || data.medicalHistory is list) &&
+             (!('vaccineRecords' in data) || data.vaccineRecords is list) &&
+             (!('nextVaccineDate' in data) || data.nextVaccineDate is timestamp) &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidOwner(data) {
+      return hasOnlyAllowedFields(['name', 'phone', 'email', 'address', 'citizenId', 'photoURL', 'petIds', 'createdAt']) &&
+             data.name is string && data.name.size() > 0 &&
+             data.phone is string && data.phone.size() > 0 &&
+             (!('email' in data) || isValidEmail(data.email)) &&
+             (!('address' in data) || data.address is string) &&
+             (!('citizenId' in data) || (data.citizenId is string && data.citizenId.size() == 13)) &&
+             (!('photoURL' in data) || data.photoURL is string) &&
+             (!('petIds' in data) || data.petIds is list) &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidAppointment(data) {
+      return hasOnlyAllowedFields(['patientId', 'patientName', 'doctorId', 'doctorName', 'serviceType', 'startTime', 'endTime', 'status', 'depositPaid', 'createdAt']) &&
+             data.patientId is string && data.patientName is string &&
+             data.doctorId is string && data.doctorName is string &&
+             data.serviceType is string &&
+             data.startTime is timestamp && data.endTime is timestamp &&
+             data.status in ['pending', 'confirmed', 'completed', 'cancelled'] &&
+             data.depositPaid is bool &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidInventoryItem(data) {
+      return hasOnlyAllowedFields(['itemName', 'quantity', 'unitPrice', 'minStock', 'category', 'createdAt']) &&
+             data.itemName is string && data.itemName.size() > 0 &&
+             data.quantity is number &&
+             data.unitPrice is number && data.unitPrice >= 0 &&
+             data.minStock is number && data.minStock >= 0 &&
+             (!('category' in data) || data.category is string) &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidSale(data) {
+      return hasOnlyAllowedFields(['items', 'total', 'createdAt']) &&
+             data.items is list &&
+             data.total is number &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidMicrochip(data) {
+      return hasOnlyAllowedFields(['number', 'petName', 'ownerName', 'createdAt']) &&
+             data.number is string && data.number.size() > 0 && data.number.size() < 50 &&
+             data.petName is string && data.petName.size() > 0 && data.petName.size() < 100 &&
+             data.ownerName is string && data.ownerName.size() > 0 && data.ownerName.size() < 100 &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidOPDRecord(data) {
+      return hasOnlyAllowedFields(['dateVisit', 'patientId', 'petName', 'status', 'category', 'finalDiagnosis', 'revenue', 'attachments', 'items']) &&
+             data.dateVisit is timestamp &&
+             (!('patientId' in data) || data.patientId is string) &&
+             data.petName is string && data.petName.size() > 0 &&
+             data.status is string &&
+             (!('category' in data) || data.category in ["Treatment", "Grooming", "Vaccine", "Other"]) &&
+             (!('finalDiagnosis' in data) || data.finalDiagnosis is string) &&
+             data.revenue is number && data.revenue >= 0 &&
+             (!('attachments' in data) || data.attachments is list) &&
+             (!('items' in data) || data.items is list);
+    }
+
+    function isValidExpense(data) {
+      return hasOnlyAllowedFields(['date', 'description', 'amount', 'category', 'createdBy']) &&
+             data.date is timestamp &&
+             data.description is string && data.description.size() > 0 &&
+             data.amount is number &&
+             data.category is string &&
+             data.createdBy is string;
+    }
+
+    function isValidPublicBooking(data) {
+      return hasOnlyAllowedFields(['ownerName', 'ownerPhone', 'petName', 'petSpecies', 'requestedDate', 'serviceType', 'status', 'createdAt']) &&
+             data.ownerName is string && data.ownerPhone is string &&
+             (!('petName' in data) || data.petName is string) &&
+             (!('petSpecies' in data) || data.petSpecies is string) &&
+             data.requestedDate is timestamp &&
+             (!('serviceType' in data) || data.serviceType is string) &&
+             data.status in ['pending', 'approved', 'rejected'] &&
+             data.createdAt is timestamp;
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow update: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /patients/{patientId} {
+      allow read: if isStaff() || isAdmin();
+      allow create: if isStaff() && isValidPatient(request.resource.data);
+      allow update: if isStaff() && isValidPatient(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /owners/{ownerId} {
+      allow read: if isStaff() || isAdmin();
+      allow create: if isStaff() && isValidOwner(request.resource.data);
+      allow update: if isStaff() && isValidOwner(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /appointments/{appointmentId} {
+      allow read: if isStaff() || isAdmin();
+      allow create: if isStaff() && isValidAppointment(request.resource.data);
+      allow update: if isStaff() && (
+        isValidAppointment(request.resource.data) || 
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) && request.resource.data.status in ['pending', 'confirmed', 'completed', 'cancelled'])
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /inventory/{itemId} {
+      allow read: if isStaff() || isAdmin();
+      allow create: if isStaff() && isValidInventoryItem(request.resource.data);
+      allow update: if isStaff() && (
+        isValidInventoryItem(request.resource.data) ||
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity'])
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /sales/{saleId} {
+      allow read: if isStaff();
+      allow create: if isStaff() && isValidSale(request.resource.data);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /microchips/{chipId} {
+      allow read: if isStaff();
+      allow create: if isStaff() && isValidMicrochip(request.resource.data);
+      allow update: if isStaff() && isValidMicrochip(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /opd_records/{recordId} {
+      allow read: if isStaff();
+      allow create: if isStaff() && isValidOPDRecord(request.resource.data);
+      allow update: if isStaff() && isValidOPDRecord(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /expenses/{expenseId} {
+      allow read: if isStaff();
+      allow create: if isStaff() && isValidExpense(request.resource.data);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /public_bookings/{bookingId} {
+      allow read: if isStaff();
+      allow create: if true; // Allow public to create booking requests
+      allow update: if isStaff() && isValidPublicBooking(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+  }
+}
