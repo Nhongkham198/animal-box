@@ -122,7 +122,7 @@ function AppContent() {
         setLocalAuthError("Login was cancelled. Please try again.");
       } else {
         console.error("Login failed:", error);
-        setLocalAuthError("Failed to sign in. Please check your connection and try again.");
+        setLocalAuthError(`Failed to sign in (${error.code || 'unknown'}). Please check your connection or contact support.`);
       }
     }
   };
