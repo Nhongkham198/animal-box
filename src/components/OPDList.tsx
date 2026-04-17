@@ -94,7 +94,7 @@ interface OPDQueueItem {
 
 export default function OPDList({ setActiveView }: { setActiveView: (view: any) => void }) {
   const throwError = useAsyncError();
-  const { user, isAuthReady } = useAuth();
+  const { user, isAuthReady, isStaff } = useAuth();
   const [records, setRecords] = useState<OPDRecord[]>([]);
   const [opdQueue, setOpdQueue] = useState<OPDQueueItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -136,7 +136,10 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
   });
 
   useEffect(() => {
-    if (!isAuthReady || !user) return;
+    if (!isAuthReady || !user || !isStaff) {
+      if (isAuthReady && !isStaff) setLoading(false);
+      return;
+    }
 
     const q = query(collection(db, 'opd_records'), orderBy('dateVisit', 'desc'));
     const unsubscribe = onSnapshot(q, (snap) => {
@@ -144,7 +147,8 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
       setRecords(data);
       setLoading(false);
     }, (err) => {
-      console.error("OPD records listener error:", err);
+      console.warn("OPD records listener (non-critical):", err);
+      handleFirestoreError(err, OperationType.LIST, 'opd_records');
     });
 
     // Fetch current OPD queue from appointments
@@ -157,21 +161,23 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
       const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as OPDQueueItem));
       setOpdQueue(data);
     }, (err) => {
-      console.error("OPD queue listener error:", err);
+      console.warn("OPD queue listener (non-critical):", err);
+      handleFirestoreError(err, OperationType.LIST, 'appointments');
     });
 
     // Fetch patients for selection
     getDocs(collection(db, 'patients')).then(snap => {
       setPatients(snap.docs.map(doc => ({ id: doc.id, name: doc.data().name })));
     }).catch(err => {
-      console.error("Error fetching patients for OPD selection:", err);
+      console.warn("Error fetching patients for OPD selection (non-critical):", err);
+      handleFirestoreError(err, OperationType.LIST, 'patients');
     });
 
     return () => {
       unsubscribe();
       unsubscribeQueue();
     };
-  }, [isAuthReady, user]);
+  }, [isAuthReady, user, isStaff]);
 
   const handleAddRecord = async (e: React.FormEvent) => {
     e.preventDefault();

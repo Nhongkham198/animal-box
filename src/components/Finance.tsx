@@ -47,7 +47,7 @@ interface Transaction {
 
 export default function Finance() {
   const throwError = useAsyncError();
-  const { user, isAuthReady } = useAuth();
+  const { user, isAuthReady, isStaff } = useAuth();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAddingExpense, setIsAddingExpense] = useState(false);
@@ -62,7 +62,10 @@ export default function Finance() {
   });
 
   useEffect(() => {
-    if (!isAuthReady || !user) return;
+    if (!isAuthReady || !user || !isStaff) {
+      if (isAuthReady && !isStaff) setLoading(false);
+      return;
+    }
 
     let expData: Transaction[] = [];
     let incData: Transaction[] = [];
@@ -95,7 +98,8 @@ export default function Finance() {
       });
       updateAll();
     }, (err) => {
-      handleFirestoreError(err, OperationType.GET, 'expenses');
+      console.warn("Expenses listener restricted:", err.message);
+      setLoading(false);
     });
 
     // Listen to OPD records for income
@@ -113,14 +117,15 @@ export default function Finance() {
       } as Transaction));
       updateAll();
     }, (err) => {
-      handleFirestoreError(err, OperationType.GET, 'opd_records');
+      console.warn("OPD records listener (finance) restricted:", err.message);
+      setLoading(false);
     });
 
     return () => {
       unsubscribeExpenses();
       unsubscribeIncome();
     };
-  }, [isAuthReady, user]);
+  }, [isAuthReady, user, isStaff]);
 
   const handleAddExpense = async (e: React.FormEvent) => {
     e.preventDefault();

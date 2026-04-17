@@ -73,7 +73,7 @@ interface Owner {
 
 export default function Patients() {
   const throwError = useAsyncError();
-  const { user, isAuthReady } = useAuth();
+  const { user, isAuthReady, isStaff } = useAuth();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [ownersMap, setOwnersMap] = useState<Record<string, Owner>>({});
   const [searchQuery, setSearchQuery] = useState('');
@@ -117,7 +117,7 @@ export default function Patients() {
 
       setTimelineData(combined);
     } catch (err) {
-      console.error("Timeline fetch error:", err);
+      console.warn("Timeline fetch warning (check permissions):", err);
     } finally {
       setIsTimelineLoading(false);
     }
@@ -152,7 +152,10 @@ export default function Patients() {
   };
 
   useEffect(() => {
-    if (!isAuthReady || !user) return;
+    if (!isAuthReady || !user || !isStaff) {
+      if (isAuthReady && !isStaff) setLoading(false);
+      return;
+    }
 
     const fetchPatients = async () => {
       try {
@@ -163,10 +166,12 @@ export default function Patients() {
         setPatients(pts);
         setLoading(false);
       } catch (err: any) {
-        console.error("Patients fetch error:", err);
-        if (err.message?.includes('permission')) {
-          console.warn("Permission error in patients, retrying in 2 seconds...");
-          setTimeout(fetchPatients, 2000);
+        if (err.message?.includes('permissions')) {
+          console.warn("Patients fetch denied (non-critical):", err);
+          setLoading(false);
+        } else {
+          console.error("Patients fetch error:", err);
+          handleFirestoreError(err, OperationType.LIST, 'patients');
         }
       }
     };
@@ -180,18 +185,15 @@ export default function Patients() {
           map[doc.id] = { id: doc.id, ...doc.data() } as Owner;
         });
         setOwnersMap(map);
-      } catch (err: any) {
-        console.error("Owners fetch error:", err);
-        if (err.message?.includes('permission')) {
-          console.warn("Permission error in owners, retrying in 2 seconds...");
-          setTimeout(fetchOwners, 2000);
-        }
+      } catch (err) {
+        console.warn("Owners fetch warning (non-critical):", err);
+        handleFirestoreError(err, OperationType.LIST, 'owners');
       }
     };
 
     fetchPatients();
     fetchOwners();
-  }, [isAuthReady, user]);
+  }, [isAuthReady, user, isStaff]);
 
   const handleUpdatePhoto = async (patientId: string, photoURL: string) => {
     try {

@@ -35,32 +35,37 @@ import { StatCard, Card } from './ui/Card';
 
 export default function Analytics() {
   const throwError = useAsyncError();
-  const { user, isAuthReady } = useAuth();
+  const { user, isAuthReady, isStaff } = useAuth();
   const [opdRecords, setOpdRecords] = useState<any[]>([]);
   const [patients, setPatients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!isAuthReady || !user) return;
+    if (!isAuthReady || !user || !isStaff) {
+      if (isAuthReady && !isStaff) setLoading(false);
+      return;
+    }
 
     const unsubscribeOPD = onSnapshot(collection(db, 'opd_records'), (snap) => {
       setOpdRecords(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     }, (err) => {
-      console.error("Analytics OPD records listener error:", err);
+      console.warn("OPD listener (analytics) restricted:", err.message);
+      setLoading(false);
     });
 
     const unsubscribePatients = onSnapshot(collection(db, 'patients'), (snap) => {
       setPatients(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setLoading(false);
     }, (err) => {
-      console.error("Analytics patients listener error:", err);
+      console.warn("Patients listener (analytics) restricted:", err.message);
+      setLoading(false);
     });
 
     return () => {
       unsubscribeOPD();
       unsubscribePatients();
     };
-  }, [isAuthReady, user]);
+  }, [isAuthReady, user, isStaff]);
 
   // Calculations
   const totalRevenue = opdRecords.reduce((sum, r) => sum + (r.revenue || 0), 0);

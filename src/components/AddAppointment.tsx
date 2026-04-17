@@ -16,6 +16,7 @@ import {
   OperationType
 } from '../firebase';
 import { useAsyncError } from '../hooks/useAsyncError';
+import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
 
 interface Patient {
@@ -31,25 +32,28 @@ interface Patient {
 
 export default function AddAppointment() {
   const throwError = useAsyncError();
+  const { user, isAuthReady, isStaff } = useAuth();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!isAuthReady || !user || !isStaff) {
+      if (isAuthReady && !isStaff) setLoading(false);
+      return;
+    }
+
     const q = query(collection(db, 'patients'), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snap) => {
       const pts = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Patient));
       setPatients(pts);
       setLoading(false);
     }, (err) => {
-      try {
-        handleFirestoreError(err, OperationType.LIST, 'patients');
-      } catch (e) {
-        throwError(e);
-      }
+      console.warn("Patients listener (AddAppt) restricted:", err.message);
+      setLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, [isAuthReady, user, isStaff]);
 
   const filteredPatients = patients.filter(p => 
     p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||

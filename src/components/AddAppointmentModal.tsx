@@ -45,7 +45,7 @@ const SERVICES = [
 
 export default function AddAppointmentModal({ isOpen, onClose }: AddAppointmentModalProps) {
   const throwError = useAsyncError();
-  const { user, isAuthReady } = useAuth();
+  const { user, isAuthReady, isStaff } = useAuth();
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState(1);
   
@@ -69,7 +69,7 @@ export default function AddAppointmentModal({ isOpen, onClose }: AddAppointmentM
   const [doctors, setDoctors] = useState<any[]>([]);
 
   useEffect(() => {
-    if (!isOpen || !isAuthReady || !user) return;
+    if (!isOpen || !isAuthReady || !user || !isStaff) return;
 
     // Fetch doctors
     const q = query(collection(db, 'users'), where('role', '==', 'doctor'));
@@ -80,10 +80,10 @@ export default function AddAppointmentModal({ isOpen, onClose }: AddAppointmentM
         setFormData(prev => ({ ...prev, doctorId: docs[0].id, doctorName: docs[0].name }));
       }
     }, (err) => {
-      console.error("AddAppointmentModal doctors listener error:", err);
+      console.warn("AddAppointmentModal doctors listener restricted:", err.message);
     });
     return () => unsub();
-  }, [isOpen, isAuthReady, user, formData.doctorId]);
+  }, [isOpen, isAuthReady, user, isStaff, formData.doctorId]);
 
   const handleSearchPatient = async (val: string) => {
     setPatientSearch(val);
@@ -119,9 +119,9 @@ export default function AddAppointmentModal({ isOpen, onClose }: AddAppointmentM
       );
 
       const [nameSnap, hnSnap, ownerSnap] = await Promise.all([
-        getDocs(nameQ), 
-        getDocs(hnQ),
-        getDocs(ownerQ)
+        getDocs(nameQ).catch(e => { console.warn("Appt search - Name fetch warning:", e); return { empty: true, docs: [] }; }), 
+        getDocs(hnQ).catch(e => { console.warn("Appt search - HN fetch warning:", e); return { empty: true, docs: [] }; }),
+        getDocs(ownerQ).catch(e => { console.warn("Appt search - Owner fetch warning:", e); return { empty: true, docs: [] }; })
       ]);
       
       const resultsMap = new Map();
@@ -143,7 +143,7 @@ export default function AddAppointmentModal({ isOpen, onClose }: AddAppointmentM
       
       setSearchResults(Array.from(resultsMap.values()));
     } catch (err) {
-      console.error(err);
+      console.warn("Error searching results (check permissions):", err);
     } finally {
       setIsSearching(false);
     }
@@ -156,7 +156,10 @@ export default function AddAppointmentModal({ isOpen, onClose }: AddAppointmentM
     
     if (patient.ownerIds && patient.ownerIds.length > 0) {
       try {
-        const ownerSnap = await getDocs(query(collection(db, 'owners'), where('__name__', 'in', patient.ownerIds)));
+        const ownerSnap = await getDocs(query(collection(db, 'owners'), where('__name__', 'in', patient.ownerIds))).catch(e => {
+          console.warn("Owner info fetch warning:", e);
+          return { empty: true, docs: [] };
+        });
         if (!ownerSnap.empty) {
           const ownerData = ownerSnap.docs[0].data();
           ownerName = ownerData.name;

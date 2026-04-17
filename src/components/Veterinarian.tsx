@@ -46,14 +46,17 @@ interface StaffUser {
 
 export default function Veterinarian() {
   const throwError = useAsyncError();
-  const { user, isAuthReady } = useAuth();
+  const { user, isAuthReady, isStaff } = useAuth();
   const [mode, setMode] = useState<'list' | 'edit'>('list');
   const [users, setUsers] = useState<StaffUser[]>([]);
   const [editingUser, setEditingUser] = useState<Partial<StaffUser> | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!isAuthReady || !user) return;
+    if (!isAuthReady || !user || !isStaff) {
+      if (isAuthReady && !isStaff) setLoading(false);
+      return;
+    }
 
     const q = query(collection(db, 'users'), orderBy('name', 'asc'));
     const unsubscribe = onSnapshot(q, (snap) => {
@@ -61,10 +64,11 @@ export default function Veterinarian() {
       setUsers(data);
       setLoading(false);
     }, (err) => {
-      console.error("Veterinarian users listener error:", err);
+      console.warn("Users listener (veterinarian) restricted:", err.message);
+      setLoading(false);
     });
     return () => unsubscribe();
-  }, [isAuthReady, user]);
+  }, [isAuthReady, user, isStaff]);
 
   const handleUpdate = async () => {
     if (!editingUser?.id) return;

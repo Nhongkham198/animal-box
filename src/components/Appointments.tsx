@@ -49,7 +49,7 @@ interface AppointmentsProps {
 
 export default function Appointments({ setActiveView }: AppointmentsProps) {
   const throwError = useAsyncError();
-  const { user, isAuthReady } = useAuth();
+  const { user, isAuthReady, isStaff } = useAuth();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -58,7 +58,7 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
   const [viewingStatusList, setViewingStatusList] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isAuthReady || !user) return;
+    if (!isAuthReady || !user || !isStaff) return;
 
     const q = query(collection(db, 'appointments'), orderBy('startTime', 'asc'));
     const unsubscribe = onSnapshot(q, (snap) => {
@@ -66,10 +66,11 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
       setAppointments(apps);
       setLoading(false);
     }, (err) => {
-      console.error("Appointments listener error:", err);
+      console.warn("Appointments listener restricted:", err.message);
+      setLoading(false);
     });
     return () => unsubscribe();
-  }, [isAuthReady, user]);
+  }, [isAuthReady, user, isStaff]);
 
   const handleUpdateStatus = async (apptId: string, newStatus: string) => {
     try {

@@ -45,7 +45,7 @@ interface CartItem {
 
 export default function POS() {
   const throwError = useAsyncError();
-  const { user, isAuthReady } = useAuth();
+  const { user, isAuthReady, isStaff } = useAuth();
   const [patients, setPatients] = useState<any[]>([]);
   const [inventory, setInventory] = useState<any[]>([]);
   const [selectedOwner, setSelectedOwner] = useState<any>(null);
@@ -56,25 +56,25 @@ export default function POS() {
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'transfer'>('cash');
 
   useEffect(() => {
-    if (!isAuthReady || !user) return;
+    if (!isAuthReady || !user || !isStaff) return;
 
     const unsubscribePatients = onSnapshot(collection(db, 'patients'), (snap) => {
       setPatients(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     }, (err) => {
-      handleFirestoreError(err, OperationType.GET, 'patients');
+      console.warn("Patients listener (POS) restricted:", err.message);
     });
 
     const unsubscribeInventory = onSnapshot(collection(db, 'inventory'), (snap) => {
       setInventory(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     }, (err) => {
-      handleFirestoreError(err, OperationType.GET, 'inventory');
+      console.warn("Inventory listener (POS) restricted:", err.message);
     });
 
     return () => {
       unsubscribePatients();
       unsubscribeInventory();
     };
-  }, [isAuthReady, user]);
+  }, [isAuthReady, user, isStaff]);
 
   const handleSelectOwner = async (ownerPhone: string) => {
     const q = query(collection(db, 'patients'), where('ownerPhone', '==', ownerPhone));

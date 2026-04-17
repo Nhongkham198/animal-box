@@ -1,55 +1,105 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, RefreshCw, Home } from 'lucide-react';
+import { handleFirestoreError } from '../firebase';
 
-interface ErrorBoundaryProps {
-  children: ReactNode;
+interface Props {
+  children?: ReactNode;
+  fallback?: ReactNode;
 }
 
-interface ErrorBoundaryState {
+interface State {
   hasError: boolean;
-  error: Error | null;
+  errorInfo: string | null;
+  isPermissionError: boolean;
 }
 
-export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  constructor(props: ErrorBoundaryProps) {
-    super(props);
-    this.state = { hasError: false, error: null };
+export class ErrorBoundary extends Component<Props, State> {
+  public state: State = {
+    hasError: false,
+    errorInfo: null,
+    isPermissionError: false
+  };
+
+  public static getDerivedStateFromError(error: Error): State {
+    let isPermissionError = false;
+    let info = error.message;
+
+    try {
+      const parsed = JSON.parse(error.message);
+      if (parsed.error?.toLowerCase().includes('permission') || parsed.error?.toLowerCase().includes('insufficient')) {
+        isPermissionError = true;
+      }
+    } catch {
+      if (error.message.toLowerCase().includes('permission') || error.message.toLowerCase().includes('insufficient')) {
+        isPermissionError = true;
+      }
+    }
+
+    return { hasError: true, errorInfo: info, isPermissionError };
   }
 
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { hasError: true, error };
+  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Uncaught error:', error, errorInfo);
   }
 
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("ErrorBoundary caught an error", error, errorInfo);
-  }
+  private handleReset = () => {
+    this.setState({ hasError: false, errorInfo: null, isPermissionError: false });
+    window.location.reload();
+  };
 
-  render() {
+  public render() {
     if (this.state.hasError) {
-      let errorMessage = "Something went wrong.";
+      if (this.props.fallback) return this.props.fallback;
+
+      let errorMessage = "Something went wrong. Please try again later.";
+      let errorDetail = "";
+
       try {
-        const parsed = JSON.parse(this.state.error?.message || "{}");
+        const parsed = JSON.parse(this.state.errorInfo || '{}');
         if (parsed.error) {
-          errorMessage = `Firestore Error: ${parsed.error} during ${parsed.operationType} on ${parsed.path}`;
+          errorMessage = parsed.isPermissionError ? "Permission Denied" : "Database Error";
+          errorDetail = `${parsed.operationType?.toUpperCase()} on /${parsed.path || 'unknown'}`;
         }
       } catch {
-        errorMessage = this.state.error?.message || errorMessage;
+        errorDetail = this.state.errorInfo || "";
       }
 
       return (
-        <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
-          <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center border border-red-100">
-            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
-              <AlertCircle className="w-8 h-8 text-red-600" />
+        <div className="min-h-[400px] flex items-center justify-center p-6 bg-slate-50 rounded-3xl">
+          <div className="max-w-md w-full bg-white rounded-[2.5rem] p-8 shadow-xl border border-slate-100 text-center space-y-6">
+            <div className="w-20 h-20 bg-rose-50 rounded-[2rem] flex items-center justify-center mx-auto">
+              <AlertCircle className="w-10 h-10 text-rose-500" />
             </div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-2">Application Error</h2>
-            <p className="text-slate-600 mb-6">{errorMessage}</p>
-            <button 
-              onClick={() => window.location.reload()}
-              className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl transition-colors shadow-lg shadow-indigo-200"
-            >
-              Reload Application
-            </button>
+            
+            <div className="space-y-2">
+              <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tight">
+                {this.state.isPermissionError ? "Access Restricted" : "System Error"}
+              </h2>
+              <p className="text-slate-500 font-medium">
+                {this.state.isPermissionError 
+                  ? "Your account doesn't have permissions to view this data. Please contact the administrator."
+                  : errorMessage}
+              </p>
+              {errorDetail && (
+                <div className="p-3 bg-slate-50 rounded-xl font-mono text-[10px] text-slate-400 break-all">
+                  {errorDetail}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={this.handleReset}
+                className="flex-1 flex items-center justify-center gap-2 py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Retry
+              </button>
+            </div>
+            
+            <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">
+              Animal Box • Secure Clinic System
+            </p>
           </div>
         </div>
       );

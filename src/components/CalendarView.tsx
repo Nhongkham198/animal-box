@@ -64,7 +64,7 @@ interface CalendarViewProps {
 
 export default function CalendarView({ setActiveView }: CalendarViewProps) {
   const throwError = useAsyncError();
-  const { user, isAuthReady } = useAuth();
+  const { user, isAuthReady, isStaff } = useAuth();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -77,7 +77,7 @@ export default function CalendarView({ setActiveView }: CalendarViewProps) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
   useEffect(() => {
-    if (!isAuthReady || !user) return;
+    if (!isAuthReady || !user || !isStaff) return;
 
     const monthStart = startOfMonth(currentMonth);
     const monthEnd = endOfMonth(currentMonth);
@@ -93,11 +93,12 @@ export default function CalendarView({ setActiveView }: CalendarViewProps) {
       setAppointments(apps);
       setLoading(false);
     }, (err) => {
-      console.error("CalendarView appointments listener error:", err);
+      console.warn("CalendarView appointments listener restricted:", err.message);
+      setLoading(false);
     });
 
     return () => unsubscribe();
-  }, [currentMonth, isAuthReady, user]);
+  }, [currentMonth, isAuthReady, user, isStaff]);
 
   const handleUpdateAppointment = async () => {
     if (!selectedAppointment) return;

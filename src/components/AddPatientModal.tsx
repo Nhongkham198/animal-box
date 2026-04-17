@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { 
   db, 
+  auth,
   collection, 
   addDoc, 
   serverTimestamp,
@@ -131,7 +132,7 @@ export default function AddPatientModal({ isOpen, onClose, editPatientId }: AddP
           })) || []);
         }
       } catch (err) {
-        console.error("Error fetching patient for edit:", err);
+        console.warn("Patient data fetch warning (check permissions):", err);
       }
     };
 
@@ -178,7 +179,7 @@ export default function AddPatientModal({ isOpen, onClose, editPatientId }: AddP
       
       setFormData(prev => ({ ...prev, hn: `${datePrefix}_${nextNum}` }));
     } catch (err) {
-      console.error("Error generating HN:", err);
+      console.warn("Error generating HN (non-critical):", err);
       // Fallback to a timestamp if query fails
       setFormData(prev => ({ ...prev, hn: `${datePrefix}_${Date.now().toString().slice(-4)}` }));
     }
@@ -259,7 +260,7 @@ export default function AddPatientModal({ isOpen, onClose, editPatientId }: AddP
           setSpeciesList(['Dog', 'Cat', 'Bird', 'Rabbit', 'Other']);
         }
       } catch (err) {
-        console.error("Error fetching species list:", err);
+        console.warn("Error fetching species list (non-critical):", err);
       }
     };
 
@@ -334,7 +335,7 @@ export default function AddPatientModal({ isOpen, onClose, editPatientId }: AddP
         const results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setOwnerSearch({ index, query: phone, results });
       } catch (err) {
-        console.error("Error searching owners:", err);
+        console.warn("Owner search warning (check permissions):", err);
       } finally {
         setIsSearching(false);
       }
@@ -424,44 +425,72 @@ export default function AddPatientModal({ isOpen, onClose, editPatientId }: AddP
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (loading) return;
+
+    // Simple Client-side validation
+    if (!formData.name) {
+      alert("กรุณาระบุชื่อสัตว์เลี้ยง (Pet Name)");
+      return;
+    }
+
+    if (owners.some(o => !o.name || !o.phone)) {
+      alert("กรุณาระบุชื่อและเบอร์โทรศัพท์ของเจ้าของให้ครบถ้วน");
+      return;
+    }
+
     setLoading(true);
 
     try {
+      console.log("Starting save process for patient:", {
+        name: formData.name,
+        ownersCount: owners.length,
+        user: auth.currentUser?.email,
+        uid: auth.currentUser?.uid
+      });
       // 1. Handle Owners (Create new ones if they don't have an ID)
       const ownerIds: string[] = [];
       
       for (const owner of owners) {
-        if (owner.id) {
-          // Update existing owner
-          await updateDoc(doc(db, 'owners', owner.id), {
-            name: owner.name,
-            phone: owner.phone,
-            email: owner.email || '',
-            address: owner.address || '',
-            citizenId: owner.citizenId || '',
-            photoURL: owner.photoURL || '',
-            updatedAt: serverTimestamp()
-          });
-          ownerIds.push(owner.id);
-        } else {
-          // Create new owner
-          const ownerRef = await addDoc(collection(db, 'owners'), {
-            name: owner.name,
-            phone: owner.phone,
-            email: owner.email || '',
-            address: owner.address || '',
-            citizenId: owner.citizenId || '',
-            photoURL: owner.photoURL || '',
-            petIds: [],
-            createdAt: serverTimestamp()
-          });
-          ownerIds.push(ownerRef.id);
+        try {
+          if (owner.id) {
+            console.log("Updating existing owner:", owner.id);
+            // Update existing owner
+            await updateDoc(doc(db, 'owners', owner.id), {
+              name: owner.name,
+              phone: owner.phone,
+              email: owner.email || '',
+              address: owner.address || '',
+              citizenId: owner.citizenId || '',
+              photoURL: owner.photoURL || '',
+              updatedAt: serverTimestamp()
+            });
+            ownerIds.push(owner.id);
+          } else {
+            console.log("Creating new owner:", owner.name);
+            // Create new owner
+            const ownerRef = await addDoc(collection(db, 'owners'), {
+              name: owner.name,
+              phone: owner.phone,
+              email: owner.email || '',
+              address: owner.address || '',
+              citizenId: owner.citizenId || '',
+              photoURL: owner.photoURL || '',
+              petIds: [],
+              createdAt: serverTimestamp()
+            });
+            ownerIds.push(ownerRef.id);
+            console.log("Created new owner ID:", ownerRef.id);
+          }
+        } catch (ownerErr) {
+          console.error("Owner processing failed:", ownerErr);
+          handleFirestoreError(ownerErr, OperationType.WRITE, `owners/${owner.id || 'new'}`);
         }
       }
 
       // 2. Create or Update Patient
+      console.log("Processing patient data update...");
       const nextVaccineDate = vaccineRecords
         .filter(v => v.nextDate)
         .sort((a, b) => new Date(a.nextDate).getTime() - new Date(b.nextDate).getTime())[0]?.nextDate;
@@ -490,29 +519,44 @@ export default function AddPatientModal({ isOpen, onClose, editPatientId }: AddP
       };
 
       let patientId = editPatientId;
-      if (editPatientId) {
-        await updateDoc(doc(db, 'patients', editPatientId), patientData);
-      } else {
-        const patientRef = await addDoc(collection(db, 'patients'), {
-          ...patientData,
-          createdAt: serverTimestamp(),
-        });
-        patientId = patientRef.id;
+      try {
+        if (editPatientId) {
+          console.log("Updating existing patient:", editPatientId);
+          await updateDoc(doc(db, 'patients', editPatientId), patientData);
+        } else {
+          console.log("Adding new patient document...");
+          const patientRef = await addDoc(collection(db, 'patients'), {
+            ...patientData,
+            createdAt: serverTimestamp(),
+          });
+          patientId = patientRef.id;
+          console.log("Created new patient ID:", patientId);
+        }
+      } catch (petErr) {
+        console.error("Patient processing failed:", petErr);
+        handleFirestoreError(petErr, OperationType.WRITE, `patients/${editPatientId || 'new'}`);
       }
 
       // 3. Update Owners with the pet ID
+      console.log("Linking owners to pet...");
       for (const ownerId of ownerIds) {
-        const ownerDoc = await getDoc(doc(db, 'owners', ownerId));
-        if (ownerDoc.exists()) {
-          const currentPetIds = ownerDoc.data().petIds || [];
-          if (!currentPetIds.includes(patientId)) {
-            await updateDoc(doc(db, 'owners', ownerId), {
-              petIds: [...currentPetIds, patientId]
-            });
+        try {
+          const ownerDoc = await getDoc(doc(db, 'owners', ownerId));
+          if (ownerDoc.exists()) {
+            const currentPetIds = ownerDoc.data().petIds || [];
+            if (!currentPetIds.includes(patientId)) {
+              await updateDoc(doc(db, 'owners', ownerId), {
+                petIds: [...currentPetIds, patientId]
+              });
+            }
           }
+        } catch (linkErr) {
+          console.warn("Minor error linking owner to pet (non-critical):", linkErr);
         }
       }
 
+      console.log("Save successful!");
+      alert("บันทึกข้อมูลสำเร็จ!");
       onClose();
       // Reset form
       setFormData({ 
@@ -1074,7 +1118,7 @@ export default function AddPatientModal({ isOpen, onClose, editPatientId }: AddP
               Cancel
             </button>
             <button
-              onClick={handleSubmit}
+              onClick={() => handleSubmit()}
               disabled={loading}
               className="px-10 py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-indigo-200 hover:bg-indigo-700 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >

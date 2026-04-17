@@ -38,7 +38,7 @@ interface Microchip {
 
 export default function SearchMicrochip() {
   const throwError = useAsyncError();
-  const { user, isAuthReady } = useAuth();
+  const { user, isAuthReady, isStaff } = useAuth();
   const [microchips, setMicrochips] = useState<Microchip[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -50,17 +50,17 @@ export default function SearchMicrochip() {
   });
 
   useEffect(() => {
-    if (!isAuthReady || !user) return;
+    if (!isAuthReady || !user || !isStaff) return;
 
     const q = query(collection(db, 'microchips'), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snap) => {
       const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Microchip));
       setMicrochips(data);
     }, (err) => {
-      console.error("SearchMicrochip listener error:", err);
+      console.warn("SearchMicrochip listener restricted:", err.message);
     });
     return () => unsubscribe();
-  }, [isAuthReady, user]);
+  }, [isAuthReady, user, isStaff]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();

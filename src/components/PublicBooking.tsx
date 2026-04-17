@@ -42,23 +42,27 @@ interface BookingRequest {
 
 export default function PublicBooking() {
   const throwError = useAsyncError();
-  const { user, isAuthReady } = useAuth();
+  const { user, isAuthReady, isStaff } = useAuth();
   const [bookings, setBookings] = useState<BookingRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'confirmed' | 'cancelled'>('pending');
 
   useEffect(() => {
-    if (!isAuthReady || !user) return;
+    if (!isAuthReady || !user || !isStaff) {
+      if (isAuthReady && !isStaff) setLoading(false);
+      return;
+    }
 
     const q = query(collection(db, 'public_bookings'), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snap) => {
       setBookings(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as BookingRequest)));
       setLoading(false);
     }, (err) => {
-      console.error("PublicBooking listener error:", err);
+      console.warn("PublicBooking listener restricted:", err.message);
+      setLoading(false);
     });
     return () => unsubscribe();
-  }, [isAuthReady, user]);
+  }, [isAuthReady, user, isStaff]);
 
   const handleStatusChange = async (id: string, status: 'confirmed' | 'cancelled') => {
     try {

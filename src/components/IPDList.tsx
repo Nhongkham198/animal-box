@@ -57,7 +57,7 @@ interface IPDRecord {
 
 export default function IPDList() {
   const throwError = useAsyncError();
-  const { user, isAuthReady } = useAuth();
+  const { user, isAuthReady, isStaff } = useAuth();
   const [records, setRecords] = useState<IPDRecord[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -78,7 +78,10 @@ export default function IPDList() {
   });
 
   useEffect(() => {
-    if (!isAuthReady || !user) return;
+    if (!isAuthReady || !user || !isStaff) {
+      if (isAuthReady && !isStaff) setLoading(false);
+      return;
+    }
 
     const q = query(
       collection(db, 'ipd_records'),
@@ -90,7 +93,8 @@ export default function IPDList() {
       setRecords(data);
       setLoading(false);
     }, (err) => {
-      console.error("IPD records listener error:", err);
+      console.warn("IPD records listener restricted:", err.message);
+      setLoading(false);
     });
 
     // Fetch patients for selection (initial list or recent)
@@ -99,13 +103,13 @@ export default function IPDList() {
         const snap = await getDocs(query(collection(db, 'patients'), limit(10)));
         setPatients(snap.docs.map(doc => ({ id: doc.id, name: doc.data().name, ...doc.data() })));
       } catch (err) {
-        console.error("Error fetching patients:", err);
+        console.warn("Initial patients fetch warning (IPD/non-critical):", err);
       }
     };
     fetchInitialPatients();
 
     return () => unsubscribe();
-  }, [isAuthReady, user]);
+  }, [isAuthReady, user, isStaff]);
 
   const handleSearchPatient = async (val: string) => {
     setPatientSearch(val);
@@ -125,7 +129,7 @@ export default function IPDList() {
       const snap = await getDocs(q);
       setSearchResults(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     } catch (err) {
-      console.error("Search error:", err);
+      console.warn("Search warning (check permissions):", err);
     } finally {
       setIsSearching(false);
     }
@@ -137,12 +141,15 @@ export default function IPDList() {
     // If ownerName is not in patient record, try to fetch from owners collection
     if (!ownerName && p.ownerIds && p.ownerIds.length > 0) {
       try {
-        const ownerSnap = await getDocs(query(collection(db, 'owners'), where('__name__', 'in', p.ownerIds)));
+        const ownerSnap = await getDocs(query(collection(db, 'owners'), where('__name__', 'in', p.ownerIds))).catch(e => {
+          console.warn("Owner info fetch warning (IPD):", e);
+          return { empty: true, docs: [] };
+        });
         if (!ownerSnap.empty) {
           ownerName = ownerSnap.docs[0].data().name;
         }
       } catch (err) {
-        console.error("Error fetching owner for IPD:", err);
+        console.warn("Error fetching owner for IPD (non-critical):", err);
       }
     }
 

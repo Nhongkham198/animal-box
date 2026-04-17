@@ -21,7 +21,13 @@ interface AuthContextType {
   isAuthReady: boolean;
   isAdmin: boolean;
   isStaff: boolean;
+  authError: string | null;
 }
+
+const AUTHORIZED_EMAILS = [
+  'zowamarketing@gmail.com',
+  'animalboxclinic@gmail.com'
+];
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -30,43 +36,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [userRole, setUserRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const throwError = useAsyncError();
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setIsAuthReady(false);
+      setAuthError(null);
+
       if (firebaseUser) {
-        console.log("Auth State Changed: User logged in", {
+        const userEmail = firebaseUser.email?.toLowerCase();
+        
+        // Strict Login Restriction
+        if (!userEmail || !AUTHORIZED_EMAILS.includes(userEmail)) {
+          console.warn("Unauthorized login attempt:", userEmail);
+          setAuthError(`Access denied for ${userEmail || 'unknown user'}. Only authorized staff accounts can login.`);
+          await auth.signOut();
+          setUser(null);
+          setUserRole(null);
+          setLoading(false);
+          setIsAuthReady(true);
+          return;
+        }
+
+        console.log("Auth State Changed: Authorized user logged in", {
           uid: firebaseUser.uid,
           email: firebaseUser.email,
-          emailVerified: firebaseUser.emailVerified,
-          displayName: firebaseUser.displayName
+          isAdminEmail: AUTHORIZED_EMAILS.includes(firebaseUser.email?.toLowerCase() || '')
         });
         setUser(firebaseUser);
-        testFirestoreConnection();
         try {
-          console.log("Fetching user role for:", firebaseUser.uid, firebaseUser.email);
           const userDocRef = doc(db, 'users', firebaseUser.uid);
-          let userDoc;
+          let userDoc = null;
+          
+          const isAdminEmail = AUTHORIZED_EMAILS.includes(userEmail);
           
           try {
-            // Use getDocFromServer to bypass cache and ensure we have latest permissions
-            userDoc = await getDocFromServer(userDocRef);
-          } catch (err) {
-            console.warn("Error getting user doc from server:", err);
-            // Fallback to local cache if server fails
-            try {
-              userDoc = await getDoc(userDocRef);
-            } catch (cacheErr) {
-              console.warn("Error getting user doc from cache:", cacheErr);
-              if (firebaseUser.email === 'zowamarketing@gmail.com') {
-                console.log("Admin user detected, proceeding with local role due to permission error.");
-                // We'll set userRole to 'admin' below if userDoc is null
-              } else {
-                // For non-admins, this is a real error
-                throw cacheErr;
+            // Try cache first
+            userDoc = await getDoc(userDocRef);
+            if (!userDoc.exists()) {
+              // Try server if not in cache
+              try {
+                userDoc = await getDocFromServer(userDocRef);
+              } catch (serverErr) {
+                console.warn("Server fetch failed, using hypothetical role for admin check:", serverErr);
               }
             }
+          } catch (err) {
+            console.warn("User doc fetch failed:", err);
           }
           
           if (userDoc && userDoc.exists()) {
@@ -74,30 +91,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             console.log("User role found in Firestore:", role);
             setUserRole(role);
           } else {
-            const role = firebaseUser.email === 'zowamarketing@gmail.com' ? 'admin' : 'staff';
-            console.log("Creating/Updating user doc with role:", role);
-            try {
-              await setDoc(userDocRef, {
-                uid: firebaseUser.uid,
-                name: firebaseUser.displayName || 'Staff Member',
-                email: firebaseUser.email,
-                role: role
-              });
-            } catch (err) {
-              console.warn("setDoc failed (likely permissions):", err);
-              // If it's the admin, we still set the role locally
-              if (firebaseUser.email === 'zowamarketing@gmail.com') {
-                console.log("Admin user detected, proceeding with local role even if setDoc failed.");
-              } else {
-                // For non-admins, this is a real error
-                handleFirestoreError(err, OperationType.WRITE, `users/${firebaseUser.uid}`);
+            // Default roles if document doesn't exist or isn't readable
+            // DO NOT default to staff as it causes permission errors in UI
+            const role = isAdminEmail ? 'admin' : null;
+            console.log("Initial role determined:", role);
+            
+            // Attempt to sync with Firestore but don't crash if it fails
+            if (isAdminEmail) {
+              try {
+                await setDoc(userDocRef, {
+                  uid: firebaseUser.uid,
+                  name: firebaseUser.displayName || 'Staff Member',
+                  email: firebaseUser.email,
+                  role: 'admin',
+                  status: 'active'
+                }, { merge: true });
+              } catch (setErr) {
+                console.warn("Could not sync admin profile:", setErr);
               }
             }
             setUserRole(role);
           }
         } catch (error) {
-          console.error("Error fetching user role:", error);
-          throwError(error);
+          console.warn("Non-fatal error in Auth initialization:", error);
+          // If it's an admin, ensure they get the role even if everything else fails
+          const isAdminEmail = userEmail && AUTHORIZED_EMAILS.includes(userEmail);
+          if (isAdminEmail) {
+            setUserRole('admin');
+          } else {
+            // Only throw for non-admin users where role is critical
+            throwError(error);
+          }
         }
       } else {
         setUser(null);
@@ -118,8 +142,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     userRole,
     loading,
     isAuthReady,
-    isAdmin: userRole === 'admin' || user?.email === 'zowamarketing@gmail.com',
-    isStaff: ['admin', 'doctor', 'staff', 'vet'].includes(userRole || '') || user?.email === 'zowamarketing@gmail.com',
+    authError,
+    isAdmin: userRole === 'admin' || (user?.email && AUTHORIZED_EMAILS.includes(user.email.toLowerCase())),
+    isStaff: ['admin', 'doctor', 'staff', 'vet'].includes(userRole || '') || (user?.email && AUTHORIZED_EMAILS.includes(user.email.toLowerCase())),
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -82,7 +82,15 @@ export default function Dashboard() {
   useEffect(() => {
     if (!isAuthReady || !user) return;
 
+    // Safety timeout to ensure loading spinner doesn't get stuck
+    const timeoutId = setTimeout(() => {
+      setLoading(false);
+    }, 5000);
+
     const fetchDashboardData = async () => {
+      // Test connection first
+      testFirestoreConnection();
+      
       try {
         const now = new Date();
         const todayStart = new Date(now);
@@ -102,6 +110,13 @@ export default function Dashboard() {
         const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
         const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
+        // Check staff permissions before fetching sensitive data
+        if (!isStaff && !isAdmin) {
+          console.warn("User is not staff or admin, skipping sensitive dashboard data fetch");
+          setLoading(false);
+          return;
+        }
+
         // Fetch Data
         const [
           patientsSnap, 
@@ -112,14 +127,14 @@ export default function Dashboard() {
           lastMonthOpdSnap,
           salesSnap
         ] = await Promise.all([
-          getDocs(collection(db, 'patients')),
-          getDocs(collection(db, 'inventory')),
-          getDocs(query(collection(db, 'appointments'), where('startTime', '>=', todayStart), where('startTime', '<=', todayEnd))),
-          getDocs(query(collection(db, 'appointments'), where('startTime', '>=', yesterdayStart), where('startTime', '<=', yesterdayEnd))),
-          getDocs(query(collection(db, 'opd_records'), where('dateVisit', '>=', thisMonthStart))),
-          getDocs(query(collection(db, 'opd_records'), where('dateVisit', '>=', lastMonthStart), where('dateVisit', '<=', lastMonthEnd))),
-          getDocs(query(collection(db, 'sales'), orderBy('createdAt', 'desc'), limit(100)))
-        ]);
+          getDocs(collection(db, 'patients')).catch(e => { console.warn("Patients fetch denied (non-critical)", e); return { size: 0, docs: [] }; }),
+          getDocs(collection(db, 'inventory')).catch(e => { console.warn("Inventory fetch denied (non-critical)", e); return { size: 0, docs: [] }; }),
+          getDocs(query(collection(db, 'appointments'), where('startTime', '>=', todayStart), where('startTime', '<=', todayEnd))).catch(e => { console.warn("Appointments fetch denied (non-critical)", e); return { size: 0, docs: [] }; }),
+          getDocs(query(collection(db, 'appointments'), where('startTime', '>=', yesterdayStart), where('startTime', '<=', yesterdayEnd))).catch(e => { console.warn("Appointments (yesterday) fetch denied (non-critical)", e); return { size: 0, docs: [] }; }),
+          getDocs(query(collection(db, 'opd_records'), where('dateVisit', '>=', thisMonthStart))).catch(e => { console.warn("OPD fetch denied (non-critical)", e); return { size: 0, docs: [] }; }),
+          getDocs(query(collection(db, 'opd_records'), where('dateVisit', '>=', lastMonthStart), where('dateVisit', '<=', lastMonthEnd))).catch(e => { console.warn("OPD (last month) fetch denied (non-critical)", e); return { size: 0, docs: [] }; }),
+          getDocs(query(collection(db, 'sales'), orderBy('createdAt', 'desc'), limit(100))).catch(e => { console.warn("Sales fetch denied (non-critical)", e); return { size: 0, docs: [] }; })
+        ]) as any[];
 
         // 1. Total Patients Trend
         const totalPatients = patientsSnap.size;
@@ -221,13 +236,14 @@ export default function Dashboard() {
         setTodaySchedule(sortedSchedule);
         setLoading(false);
       } catch (err: any) {
-        console.error("Dashboard data fetch error:", err);
+        console.warn("Dashboard data fetch warning (check permissions):", err);
         setLoading(false);
       }
     };
 
     fetchDashboardData();
-  }, [isAuthReady, user]);
+    return () => clearTimeout(timeoutId);
+  }, [isAuthReady, user, isStaff, isAdmin]);
 
   const statCards = [
     { 

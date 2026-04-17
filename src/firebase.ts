@@ -8,7 +8,8 @@ import {
   User as FirebaseUser 
 } from 'firebase/auth';
 import { 
-  getFirestore, 
+  initializeFirestore,
+  memoryLocalCache,
   doc, 
   setDoc, 
   getDoc, 
@@ -32,8 +33,16 @@ import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase SDK
 const app = initializeApp(firebaseConfig);
-// Use the specific firestoreDatabaseId from the config
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Use initializeFirestore instead of getFirestore for more control over settings
+// experimentalForceLongPolling: true helps prevent "INTERNAL ASSERTION FAILED" errors
+// that can occur behind proxies or in environments with unstable WebSocket connections.
+// localCache: memoryLocalCache() prevents corrupted IndexedDB states that cause 
+// "Unexpected state (ID: ca9/b815)" crashes in iframe environments.
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+  experimentalAutoDetectLongPolling: false,
+  localCache: memoryLocalCache()
+}, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 
 // Test connection to Firestore
@@ -80,24 +89,38 @@ export interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errMessage = error instanceof Error ? error.message : String(error);
+  const isPermissionError = errMessage.toLowerCase().includes('permission') || errMessage.toLowerCase().includes('insufficient');
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errMessage,
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
+      userId: typeof auth !== 'undefined' ? auth.currentUser?.uid : undefined,
+      email: typeof auth !== 'undefined' ? auth.currentUser?.email : undefined,
+      emailVerified: typeof auth !== 'undefined' ? auth.currentUser?.emailVerified : undefined,
+      isAnonymous: typeof auth !== 'undefined' ? auth.currentUser?.isAnonymous : undefined,
+      tenantId: typeof auth !== 'undefined' ? auth.currentUser?.tenantId : undefined,
+      providerInfo: typeof auth !== 'undefined' ? auth.currentUser?.providerData.map(provider => ({
         providerId: provider.providerId,
         displayName: provider.displayName,
         email: provider.email,
         photoUrl: provider.photoURL
-      })) || []
+      })) || [] : []
     },
     operationType,
     path
   }
+  
+  if (isPermissionError) {
+    console.warn('Firestore Permission Warning: ', JSON.stringify(errInfo));
+    // For WRITE operations, we MUST throw so the UI knows it failed
+    if (operationType === OperationType.CREATE || operationType === OperationType.UPDATE || operationType === OperationType.DELETE || operationType === OperationType.WRITE) {
+      throw new Error(JSON.stringify(errInfo));
+    }
+    // For LIST/GET, we can return silently to avoid UI crashes
+    return;
+  }
+  
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }

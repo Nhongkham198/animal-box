@@ -43,7 +43,7 @@ interface InventoryItem {
 
 export default function Inventory() {
   const throwError = useAsyncError();
-  const { user, isAuthReady } = useAuth();
+  const { user, isAuthReady, isStaff } = useAuth();
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -60,7 +60,10 @@ export default function Inventory() {
   });
 
   useEffect(() => {
-    if (!isAuthReady || !user) return;
+    if (!isAuthReady || !user || !isStaff) {
+      if (isAuthReady && !isStaff) setLoading(false);
+      return;
+    }
 
     const q = query(collection(db, 'inventory'), orderBy('itemName', 'asc'));
     const unsubscribe = onSnapshot(q, (snap) => {
@@ -68,10 +71,11 @@ export default function Inventory() {
       setItems(inv);
       setLoading(false);
     }, (err) => {
-      console.error("Inventory listener error:", err);
+      console.warn("Inventory listener (non-critical):", err);
+      handleFirestoreError(err, OperationType.LIST, 'inventory');
     });
     return () => unsubscribe();
-  }, [isAuthReady, user]);
+  }, [isAuthReady, user, isStaff]);
 
   const handleAddItem = async (e: FormEvent) => {
     e.preventDefault();

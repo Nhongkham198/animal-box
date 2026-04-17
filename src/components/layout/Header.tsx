@@ -8,11 +8,14 @@ import {
   where,
   limit,
   orderBy,
-  getDocs
+  getDocs,
+  handleFirestoreError,
+  OperationType
 } from '../../firebase';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { cn } from '../../lib/utils';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface HeaderProps {
   activeView: string;
@@ -29,6 +32,7 @@ interface Notification {
 }
 
 export default function Header({ activeView, setActiveView }: HeaderProps) {
+  const { isAuthReady, isStaff } = useAuth();
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
@@ -83,6 +87,8 @@ export default function Header({ activeView, setActiveView }: HeaderProps) {
   };
 
   useEffect(() => {
+    if (!isAuthReady || !isStaff) return;
+
     // Listen for New Booking Requests (Pending)
     const bookingQuery = query(
       collection(db, 'public_bookings'),
@@ -102,6 +108,9 @@ export default function Header({ activeView, setActiveView }: HeaderProps) {
       }));
 
       updateNotifications(bookingNotifications, 'booking');
+    }, (error) => {
+      console.warn("Permission restricted for bookings listener (non-critical):", error.message);
+      // Don't throw to global ErrorBoundary for background notification listeners
     });
 
     // Listen for Low Stock Items
@@ -122,13 +131,15 @@ export default function Header({ activeView, setActiveView }: HeaderProps) {
         }));
 
       updateNotifications(stockNotifications, 'stock');
+    }, (error) => {
+      console.warn("Permission restricted for low stock listener (non-critical):", error.message);
     });
 
     return () => {
       unsubscribeBookings();
       unsubscribeStock();
     };
-  }, []);
+  }, [isAuthReady, isStaff]);
 
   const updateNotifications = (newItems: Notification[], type: 'booking' | 'stock') => {
     setNotifications(prev => {

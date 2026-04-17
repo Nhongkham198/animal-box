@@ -48,6 +48,7 @@ import { ClinicProvider, useClinic } from './contexts/ClinicContext';
 // Layout Components
 import Sidebar from './components/layout/Sidebar';
 import Header from './components/layout/Header';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Components
 import Dashboard from './components/Dashboard';
@@ -91,26 +92,38 @@ interface NavGroup {
 
 export default function App() {
   return (
-    <ClinicProvider>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
-    </ClinicProvider>
+    <ErrorBoundary>
+      <ClinicProvider>
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
+      </ClinicProvider>
+    </ErrorBoundary>
   );
 }
 
 function AppContent() {
-  const { user, loading, isAuthReady } = useAuth();
+  const { user, loading, isAuthReady, authError } = useAuth();
   const { clinicName } = useClinic();
   const [activeView, setActiveView] = useState<View>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
 
+  const [localAuthError, setLocalAuthError] = useState<string | null>(null);
+
   const handleLogin = async () => {
+    setLocalAuthError(null);
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error("Login failed:", error);
+    } catch (error: any) {
+      if (error.code === 'auth/popup-closed-by-user') {
+        setLocalAuthError("Login window was closed before completion. Please try again and wait for the window to finish.");
+      } else if (error.code === 'auth/cancelled-by-user') {
+        setLocalAuthError("Login was cancelled. Please try again.");
+      } else {
+        console.error("Login failed:", error);
+        setLocalAuthError("Failed to sign in. Please check your connection and try again.");
+      }
     }
   };
 
@@ -164,6 +177,20 @@ function AppContent() {
           <h1 className="text-3xl font-bold text-slate-900 mb-2">{clinicName}</h1>
           <p className="text-slate-500 mb-10">Smart Clinic Management & EMR System</p>
           
+          <AnimatePresence>
+            {(authError || localAuthError) && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-3 text-left"
+              >
+                <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+                <p className="text-sm font-medium text-rose-600">{authError || localAuthError}</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <button
             onClick={handleLogin}
             className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-4 px-6 rounded-2xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-3"
@@ -181,111 +208,113 @@ function AppContent() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex">
-      <Sidebar 
-        isOpen={isSidebarOpen}
-        setIsOpen={setIsSidebarOpen}
-        activeView={activeView}
-        setActiveView={setActiveView}
-        expandedGroups={expandedGroups}
-        toggleGroup={toggleGroup}
-        handleLogout={handleLogout}
-      />
+    <ErrorBoundary>
+      <div className="min-h-screen bg-slate-50 flex">
+        <Sidebar 
+          isOpen={isSidebarOpen}
+          setIsOpen={setIsSidebarOpen}
+          activeView={activeView}
+          setActiveView={setActiveView}
+          expandedGroups={expandedGroups}
+          toggleGroup={toggleGroup}
+          handleLogout={handleLogout}
+        />
 
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <Header activeView={activeView} setActiveView={setActiveView} />
+        {/* Main Content */}
+        <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          <Header activeView={activeView} setActiveView={setActiveView} />
 
-        {/* View Content */}
-        <div className="flex-1 overflow-y-auto p-8">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activeView}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-              className="h-full"
-            >
-              {activeView === 'dashboard' && <Dashboard />}
-              {activeView === 'settings-hospital' && <HospitalProfile />}
-              {activeView === 'settings-vet' && <Veterinarian />}
-              {activeView === 'settings-contact' && <ContactSetting />}
-              {activeView === 'settings-activities' && <ActivitiesSetting />}
-              {activeView === 'settings-reward' && <RewardSetting />}
-              {activeView === 'settings-product' && <ProductSetting />}
-              {activeView === 'settings-usage' && <UsageSetting />}
-              {activeView === 'settings-payment' && <PaymentMethodSetting />}
-              {activeView === 'appointments' && <Appointments setActiveView={setActiveView} />}
-              {activeView === 'calendar' && <CalendarView setActiveView={setActiveView} />}
-              {activeView === 'add-appointment' && <AddAppointment />}
-              {activeView === 'search-microchip' && <SearchMicrochip />}
-              {activeView === 'opd' && <OPDList setActiveView={setActiveView} />}
-              {activeView === 'ipd' && <IPDList />}
-              {(activeView === 'patients' || activeView === 'add-pet') && <Patients />}
-              {activeView === 'inventory' && <Inventory />}
-              {activeView === 'pos' && <POS />}
-              {activeView === 'analytics' && <Analytics />}
-              {activeView === 'finance' && <Finance />}
-              {activeView === 'public-booking' && <PublicBooking />}
-              {activeView.startsWith('settings') && 
-                activeView !== 'settings-hospital' && 
-                activeView !== 'settings-vet' && 
-                activeView !== 'settings-contact' && 
-                activeView !== 'settings-activities' && 
-                activeView !== 'settings-reward' && 
-                activeView !== 'settings-product' && (
-                <div className="flex items-center justify-center h-full text-slate-400">
-                  <div className="text-center">
-                    <Settings className="w-12 h-12 mx-auto mb-4 opacity-20" />
-                    <h3 className="text-lg font-bold text-slate-600">{activeView.replace(/-/g, ' ')}</h3>
-                    <p>Settings module is coming soon.</p>
-                  </div>
-                </div>
-              )}
-            </motion.div>
-          </AnimatePresence>
-        </div>
-      </main>
+          {/* View Content */}
+          <div className="flex-1 overflow-y-auto p-8">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeView}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.2 }}
+                className="h-full"
+              >
+                  {activeView === 'dashboard' && <Dashboard />}
+                  {activeView === 'settings-hospital' && <HospitalProfile />}
+                  {activeView === 'settings-vet' && <Veterinarian />}
+                  {activeView === 'settings-contact' && <ContactSetting />}
+                  {activeView === 'settings-activities' && <ActivitiesSetting />}
+                  {activeView === 'settings-reward' && <RewardSetting />}
+                  {activeView === 'settings-product' && <ProductSetting />}
+                  {activeView === 'settings-usage' && <UsageSetting />}
+                  {activeView === 'settings-payment' && <PaymentMethodSetting />}
+                  {activeView === 'appointments' && <Appointments setActiveView={setActiveView} />}
+                  {activeView === 'calendar' && <CalendarView setActiveView={setActiveView} />}
+                  {activeView === 'add-appointment' && <AddAppointment />}
+                  {activeView === 'search-microchip' && <SearchMicrochip />}
+                  {activeView === 'opd' && <OPDList setActiveView={setActiveView} />}
+                  {activeView === 'ipd' && <IPDList />}
+                  {(activeView === 'patients' || activeView === 'add-pet') && <Patients />}
+                  {activeView === 'inventory' && <Inventory />}
+                  {activeView === 'pos' && <POS />}
+                  {activeView === 'analytics' && <Analytics />}
+                  {activeView === 'finance' && <Finance />}
+                  {activeView === 'public-booking' && <PublicBooking />}
+                  {activeView.startsWith('settings') && 
+                    activeView !== 'settings-hospital' && 
+                    activeView !== 'settings-vet' && 
+                    activeView !== 'settings-contact' && 
+                    activeView !== 'settings-activities' && 
+                    activeView !== 'settings-reward' && 
+                    activeView !== 'settings-product' && (
+                    <div className="flex items-center justify-center h-full text-slate-400">
+                      <div className="text-center">
+                        <Settings className="w-12 h-12 mx-auto mb-4 opacity-20" />
+                        <h3 className="text-lg font-bold text-slate-600">{activeView.replace(/-/g, ' ')}</h3>
+                        <p>Settings module is coming soon.</p>
+                      </div>
+                    </div>
+                  )}
+                </motion.div>
+              </AnimatePresence>
+          </div>
+        </main>
 
-      {/* Floating Action Button */}
-      <div className="fixed bottom-8 right-8 z-50 flex flex-col-reverse items-end gap-4 group">
-        <button className="w-14 h-14 bg-[#00b4d8] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group-hover:rotate-45">
-          <Plus className="w-8 h-8" />
-        </button>
-        
-        <div className="flex flex-col-reverse gap-3 opacity-0 translate-y-10 pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto transition-all duration-300">
-          <button 
-            onClick={() => setActiveView('add-pet')}
-            className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all"
-          >
-            <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">Add Pet</span>
-            <div className="w-8 h-8 bg-rose-50 text-rose-500 rounded-lg flex items-center justify-center">
-              <PawPrint className="w-4 h-4" />
-            </div>
+        {/* Floating Action Button */}
+        <div className="fixed bottom-8 right-8 z-50 flex flex-col-reverse items-end gap-4 group">
+          <button className="w-14 h-14 bg-[#00b4d8] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group-hover:rotate-45">
+            <Plus className="w-8 h-8" />
           </button>
           
-          <button 
-            onClick={() => setActiveView('add-appointment')}
-            className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all"
-          >
-            <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">Appointment</span>
-            <div className="w-8 h-8 bg-indigo-50 text-indigo-500 rounded-lg flex items-center justify-center">
-              <Calendar className="w-4 h-4" />
-            </div>
-          </button>
+          <div className="flex flex-col-reverse gap-3 opacity-0 translate-y-10 pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto transition-all duration-300">
+            <button 
+              onClick={() => setActiveView('add-pet')}
+              className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all"
+            >
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">Add Pet</span>
+              <div className="w-8 h-8 bg-rose-50 text-rose-500 rounded-lg flex items-center justify-center">
+                <PawPrint className="w-4 h-4" />
+              </div>
+            </button>
+            
+            <button 
+              onClick={() => setActiveView('add-appointment')}
+              className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all"
+            >
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">Appointment</span>
+              <div className="w-8 h-8 bg-indigo-50 text-indigo-500 rounded-lg flex items-center justify-center">
+                <Calendar className="w-4 h-4" />
+              </div>
+            </button>
 
-          <button 
-            onClick={() => setActiveView('pos')}
-            className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all"
-          >
-            <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">POS Billing</span>
-            <div className="w-8 h-8 bg-emerald-50 text-emerald-500 rounded-lg flex items-center justify-center">
-              <CreditCard className="w-4 h-4" />
-            </div>
-          </button>
+            <button 
+              onClick={() => setActiveView('pos')}
+              className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all"
+            >
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">POS Billing</span>
+              <div className="w-8 h-8 bg-emerald-50 text-emerald-500 rounded-lg flex items-center justify-center">
+                <CreditCard className="w-4 h-4" />
+              </div>
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </ErrorBoundary>
   );
 }
