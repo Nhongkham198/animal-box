@@ -3,6 +3,7 @@ import {
   getAuth, 
   GoogleAuthProvider, 
   signInWithPopup, 
+  signInWithEmailAndPassword,
   signOut, 
   onAuthStateChanged, 
   User as FirebaseUser 
@@ -127,6 +128,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
 export { 
   signInWithPopup, 
+  signInWithEmailAndPassword,
   signOut, 
   onAuthStateChanged, 
   doc, 

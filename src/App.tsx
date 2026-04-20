@@ -9,6 +9,7 @@ import {
   db, 
   googleProvider, 
   signInWithPopup, 
+  signInWithEmailAndPassword,
   signOut, 
   onAuthStateChanged, 
   doc, 
@@ -110,6 +111,10 @@ function AppContent() {
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
 
   const [localAuthError, setLocalAuthError] = useState<string | null>(null);
+  const [loginMethod, setLoginMethod] = useState<'google' | 'email'>('google');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleLogin = async () => {
     setLocalAuthError(null);
@@ -124,6 +129,28 @@ function AppContent() {
         console.error("Login failed:", error);
         setLocalAuthError(`Failed to sign in (${error.code || 'unknown'}). Please check your connection or contact support.`);
       }
+    }
+  };
+
+  const handleEmailLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !password) return;
+    
+    setIsSubmitting(true);
+    setLocalAuthError(null);
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (error: any) {
+      console.error("Email login failed:", error);
+      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        setLocalAuthError("Invalid email or password. Please try again.");
+      } else if (error.code === 'auth/too-many-requests') {
+        setLocalAuthError("Too many failed attempts. Please try again later.");
+      } else {
+        setLocalAuthError(`Login failed: ${error.message}`);
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -191,13 +218,77 @@ function AppContent() {
             )}
           </AnimatePresence>
 
-          <button
-            onClick={handleLogin}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-4 px-6 rounded-2xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-3"
-          >
-            <img src="https://www.google.com/favicon.ico" className="w-5 h-5 brightness-0 invert" alt="Google" />
-            Sign in with Staff Account
-          </button>
+          <AnimatePresence mode="wait">
+            {loginMethod === 'google' ? (
+              <motion.div
+                key="google-login"
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                className="space-y-4"
+              >
+                <button
+                  onClick={handleLogin}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-4 px-6 rounded-2xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-3"
+                >
+                  <img src="https://www.google.com/favicon.ico" className="w-5 h-5 brightness-0 invert" alt="Google" />
+                  Sign in with Google
+                </button>
+                <button 
+                  onClick={() => setLoginMethod('email')}
+                  className="w-full text-slate-500 font-medium text-sm hover:text-indigo-600 transition-colors"
+                >
+                  Alternatively, sign in with Email & Password
+                </button>
+              </motion.div>
+            ) : (
+              <motion.form
+                key="email-login"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                onSubmit={handleEmailLogin}
+                className="space-y-4 text-left"
+              >
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Email Address</label>
+                  <input 
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-6 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                    placeholder="name@clinic.com"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Password</label>
+                  <input 
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-6 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                    placeholder="••••••••"
+                    required
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-semibold py-4 px-6 rounded-2xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-3"
+                >
+                  {isSubmitting ? 'Signing in...' : 'Sign in with Email'}
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setLoginMethod('google')}
+                  className="w-full text-center text-slate-500 font-medium text-sm hover:text-indigo-600 transition-colors"
+                >
+                  Back to Google Login
+                </button>
+              </motion.form>
+            )}
+          </AnimatePresence>
           
           <p className="mt-8 text-xs text-slate-400">
             Authorized personnel only. Access is monitored and logged.

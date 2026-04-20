@@ -51,7 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!userEmail || !AUTHORIZED_EMAILS.includes(userEmail)) {
           console.warn("Unauthorized login attempt:", userEmail);
           setAuthError(`Access denied for ${userEmail || 'unknown user'}. Only authorized staff accounts can login.`);
-          await auth.signOut();
+          // Don't sign out immediately, let the UI show the error
           setUser(null);
           setUserRole(null);
           setLoading(false);
