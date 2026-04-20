@@ -7,6 +7,8 @@ interface ClinicContextType {
   setClinicAddress: (address: string) => void;
   clinicPhone: string;
   setClinicPhone: (phone: string) => void;
+  clinicMapQuery: string;
+  setClinicMapQuery: (query: string) => void;
   quotaExceeded: boolean;
   setQuotaExceeded: (exceeded: boolean) => void;
 }
@@ -14,9 +16,10 @@ interface ClinicContextType {
 const ClinicContext = createContext<ClinicContextType | undefined>(undefined);
 
 export function ClinicProvider({ children }: { children: ReactNode }) {
-  const [clinicName, setClinicName] = useState('Animal Box');
-  const [clinicAddress, setClinicAddress] = useState('123 Clinic St, Bangkok, Thailand');
-  const [clinicPhone, setClinicPhone] = useState('02-123-4567');
+  const [clinicName, setClinicName] = useState('คลินิกรักษาสัตว์แอนนิมอลบ็อกซ์ กาฬสินธุ์');
+  const [clinicAddress, setClinicAddress] = useState('5, 7 -9 Tha Sin Kha Alley, Mueang Kalasin District, Kalasin 46000, Thailand');
+  const [clinicPhone, setClinicPhone] = useState('093-945-1539');
+  const [clinicMapQuery, setClinicMapQuery] = useState('คลินิกรักษาสัตว์แอนนิมอลบ็อกซ์ กาฬสินธุ์');
   const [quotaExceeded, setQuotaExceeded] = useState(false);
 
   const value = {
@@ -26,6 +29,8 @@ export function ClinicProvider({ children }: { children: ReactNode }) {
     setClinicAddress,
     clinicPhone,
     setClinicPhone,
+    clinicMapQuery,
+    setClinicMapQuery,
     quotaExceeded,
     setQuotaExceeded,
   };

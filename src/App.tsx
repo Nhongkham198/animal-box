@@ -423,8 +423,12 @@ function AppContent() {
         </main>
 
         {/* Floating Action Button */}
-        <div className="fixed bottom-8 right-8 z-50 flex flex-col-reverse items-end gap-4 group">
-          <button className="w-14 h-14 bg-[#00b4d8] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group-hover:rotate-45">
+        <motion.div 
+          drag
+          dragMomentum={false}
+          className="fixed bottom-8 right-8 z-50 flex flex-col-reverse items-end gap-4 group cursor-grab active:cursor-grabbing"
+        >
+          <button className="w-14 h-14 bg-[#00b4d8] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group-hover:rotate-45 pointer-events-none">
             <Plus className="w-8 h-8" />
           </button>
           
@@ -469,7 +473,7 @@ function AppContent() {
               </div>
             </button>
           </div>
-        </div>
+        </motion.div>
       </div>
     </ErrorBoundary>
   );

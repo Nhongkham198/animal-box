@@ -11,28 +11,75 @@ import {
   Award,
   ExternalLink,
   Save,
-  X
+  X,
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useClinic } from '../contexts/ClinicContext';
 import { useAuth } from '../contexts/AuthContext';
+import { GoogleGenAI } from "@google/genai";
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
 export default function HospitalProfile() {
-  const { clinicName, setClinicName, clinicAddress, setClinicAddress, clinicPhone, setClinicPhone } = useClinic();
+  const { 
+    clinicName, setClinicName, 
+    clinicAddress, setClinicAddress, 
+    clinicPhone, setClinicPhone,
+    clinicMapQuery, setClinicMapQuery
+  } = useClinic();
   const { user, isAdmin } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
+  const [isFindingAddress, setIsFindingAddress] = useState(false);
   const [editData, setEditData] = useState({
     name: clinicName,
     address: clinicAddress,
-    phone: clinicPhone
+    phone: clinicPhone,
+    mapQuery: clinicMapQuery
   });
+
+  const handleSmartSyncAddress = async () => {
+    const query = editData.mapQuery || `${editData.name}`;
+    if (!query || query.length < 3) {
+      alert("โปรดระบุชื่อสถานที่ในช่อง Map Pin ก่อนค้นหา");
+      return;
+    }
+
+    setIsFindingAddress(true);
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `ค้นหาที่อยู่อย่างเป็นทางการของสถานพยาบาลหรือสถานที่นี้: "${query}" ให้ข้อมูลเฉพาะที่อยู่เต็มรูปแบบเพียงอย่างเดียว ห้ามมีคำนำหน้าหรือสรุปอื่นๆ`,
+        config: {
+          tools: [{ googleSearch: {} }]
+        }
+      });
+
+      const foundAddress = response.text?.trim();
+      if (foundAddress) {
+        setEditData(prev => ({ ...prev, address: foundAddress }));
+      } else {
+        alert("ไม่พบข้อมูลที่อยู่ โปรดลองระบุชื่อให้ชัดเจนกว่านี้");
+      }
+    } catch (err) {
+      console.error("Gemini Search Error:", err);
+      alert("เกิดข้อผิดพลาดในการค้นหาข้อมูลที่อยู่");
+    } finally {
+      setIsFindingAddress(false);
+    }
+  };
 
   const handleSave = () => {
     setClinicName(editData.name);
     setClinicAddress(editData.address);
     setClinicPhone(editData.phone);
+    setClinicMapQuery(editData.mapQuery);
     setIsEditing(false);
   };
+
+  // Construct the search query for Google Maps
+  const effectiveMapQuery = clinicMapQuery || `${clinicName} ${clinicAddress}`;
 
   return (
     <div className="space-y-6">
@@ -176,24 +223,74 @@ export default function HospitalProfile() {
               </div>
 
               <div className="pt-4">
-                <h3 className="text-lg font-black text-slate-900 mb-4">Map</h3>
-                <div className="aspect-video bg-slate-100 rounded-2xl overflow-hidden border border-slate-200 relative group">
-                  <img 
-                    src="https://illustrations.popsy.co/amber/map.svg" 
-                    alt="Map Placeholder" 
-                    className="w-full h-full object-contain p-8 opacity-40"
-                    referrerPolicy="no-referrer"
-                  />
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/5 group-hover:bg-transparent transition-all">
-                    <div className="bg-white p-3 rounded-full shadow-xl">
-                      <MapPin className="w-6 h-6 text-red-500" />
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-black text-slate-900 uppercase italic">Map Pin</h3>
+                  {isEditing && (
+                    <div className="text-[10px] font-bold text-indigo-500 bg-indigo-50 px-2 py-1 rounded">
+                      TIP: Copy exact Google Maps name or Plus Code
                     </div>
+                  )}
+                </div>
+
+                {isEditing && (
+                  <div className="mb-4">
+                    <p className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-widest">Pin Location Search (Optional)</p>
+                    <input 
+                      className="w-full bg-slate-50 border-none rounded-xl py-3 px-4 focus:ring-2 focus:ring-indigo-500 font-bold text-slate-700 placeholder:text-slate-300"
+                      placeholder="เช่น : คลินิกรักษาสัตว์แอนนิมอลบ็อกซ์ กาฬสินธุ์ หรือ Plus Code"
+                      value={editData.mapQuery}
+                      onChange={e => setEditData({...editData, mapQuery: e.target.value})}
+                    />
                   </div>
+                )}
+
+                <div className="aspect-video bg-slate-50 rounded-2xl overflow-hidden border border-slate-200 relative group shadow-inner">
+                  {effectiveMapQuery ? (
+                    <iframe
+                      width="100%"
+                      height="100%"
+                      frameBorder="0"
+                      style={{ border: 0 }}
+                      src={`https://maps.google.com/maps?q=${encodeURIComponent(effectiveMapQuery)}&t=&z=15&ie=UTF8&iwloc=&output=embed`}
+                      allowFullScreen
+                      className="grayscale-[20%] contrast-[110%] opacity-90 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-500"
+                    ></iframe>
+                  ) : (
+                    <>
+                      <img 
+                        src="https://illustrations.popsy.co/amber/map.svg" 
+                        alt="Map Placeholder" 
+                        className="w-full h-full object-contain p-8 opacity-40"
+                        referrerPolicy="no-referrer"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/5 group-hover:bg-transparent transition-all">
+                        <div className="bg-white p-3 rounded-full shadow-xl">
+                          <MapPin className="w-6 h-6 text-red-500" />
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
 
               <div className="pt-4">
-                <h3 className="text-lg font-black text-slate-900 mb-4">Address</h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-black text-slate-900">Address</h3>
+                  {isEditing && (
+                    <button
+                      onClick={handleSmartSyncAddress}
+                      disabled={isFindingAddress}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-all disabled:opacity-50"
+                    >
+                      {isFindingAddress ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-3 h-3" />
+                      )}
+                      Sync from Pin
+                    </button>
+                  )}
+                </div>
                 {isEditing ? (
                   <textarea 
                     className="w-full bg-slate-50 border-none rounded-2xl py-3 px-4 focus:ring-2 focus:ring-indigo-500 font-bold text-slate-700"

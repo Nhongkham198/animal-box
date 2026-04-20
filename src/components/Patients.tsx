@@ -146,8 +146,20 @@ export default function Patients() {
   }, [selectedPatient, activeTab]);
   const [isAddPatientModalOpen, setIsAddPatientModalOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const cancelImportRef = useRef(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0, percentage: 0 });
+
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isImporting) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isImporting]);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [editPatientId, setEditPatientId] = useState<string | null>(null);
@@ -376,6 +388,7 @@ export default function Patients() {
     if (!files || files.length === 0) return;
 
     setIsImporting(true);
+    cancelImportRef.current = false;
     setImportProgress({ current: 0, total: 0, percentage: 0 });
 
     try {
@@ -383,9 +396,15 @@ export default function Patients() {
       
       // 1. Gather all data
       for (let i = 0; i < files.length; i++) {
+        if (cancelImportRef.current) break;
         const buffer = await files[i].arrayBuffer();
         const sheetPets = parsePetExcel(buffer);
         allPetsToImport = [...allPetsToImport, ...sheetPets];
+      }
+
+      if (cancelImportRef.current) {
+        setIsImporting(false);
+        return;
       }
 
       const total = allPetsToImport.length;
@@ -407,6 +426,8 @@ export default function Patients() {
       let skippedCount = 0;
 
       for (const pet of allPetsToImport) {
+        if (cancelImportRef.current) break;
+
         // Find existing owner in memory first
         let ownerId = Object.keys(existingOwners).find(oid => existingOwners[oid].phone === pet.ownerPhone);
         
@@ -481,7 +502,11 @@ export default function Patients() {
 
       setTimeout(() => {
         setIsImporting(false);
-        alert(`การนำเข้าเสร็จสิ้น!\n- นำเข้าใหม่: ${importedCount} รายการ\n- ข้อมูลซ้ำ (ข้าม): ${skippedCount} รายการ`);
+        if (cancelImportRef.current) {
+          alert(`การนำเข้าถูกยกเลิก\n- นำเข้าสำเร็จ: ${importedCount} รายการ\n- ข้อมูลซ้ำ (ข้าม): ${skippedCount} รายการ`);
+        } else {
+          alert(`การนำเข้าเสร็จสิ้น!\n- นำเข้าใหม่: ${importedCount} รายการ\n- ข้อมูลซ้ำ (ข้าม): ${skippedCount} รายการ`);
+        }
       }, 500);
 
     } catch (err) {
@@ -527,8 +552,20 @@ export default function Patients() {
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="bg-white rounded-[2.5rem] p-10 max-w-md w-full shadow-2xl border border-slate-100 text-center space-y-8"
+              className="bg-white rounded-[2.5rem] p-10 max-w-md w-full shadow-2xl border border-slate-100 text-center space-y-8 relative overflow-hidden"
             >
+              {/* Close Button */}
+              <button 
+                onClick={() => {
+                  if (confirm("คุณต้องการยกเลิกการนำเข้าข้อมูลใช่หรือไม่?")) {
+                    cancelImportRef.current = true;
+                  }
+                }}
+                className="absolute top-6 right-6 p-2 rounded-full hover:bg-slate-50 text-slate-400 hover:text-slate-600 transition-colors z-10"
+              >
+                <X className="w-6 h-6" />
+              </button>
+
               <div className="relative w-32 h-32 mx-auto">
                 {/* Circular Progress (SVG) */}
                 <svg className="w-full h-full transform -rotate-90">
