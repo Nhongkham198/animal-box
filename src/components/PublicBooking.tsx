@@ -356,7 +356,7 @@ export default function PublicBooking() {
                             room.status === 'available' 
                               ? "bg-white border-2 border-slate-100 text-slate-400 hover:border-indigo-400 hover:text-indigo-600 hover:shadow-xl hover:shadow-indigo-100/50" 
                               : room.status === 'occupied' 
-                                ? "bg-indigo-600 border-2 border-indigo-700 text-white shadow-lg shadow-indigo-100"
+                                ? "bg-white border-2 border-rose-100 text-rose-400 hover:border-rose-300"
                                 : "bg-slate-200 border-2 border-slate-300 text-slate-400 cursor-not-allowed opacity-50"
                           )}
                         >
@@ -372,23 +372,31 @@ export default function PublicBooking() {
                                 repeat: Infinity, 
                                 ease: "easeInOut" 
                               }}
-                              className="absolute inset-0 bg-indigo-50"
+                              className="absolute inset-0 bg-emerald-50/50"
                             />
                           )}
 
                           <Bed className={cn(
                             "w-5 h-5 transition-transform relative z-10", 
-                            room.status === 'occupied' ? "animate-pulse" : "group-hover/room:scale-110"
+                            room.status === 'occupied' ? "text-rose-500" : "group-hover/room:scale-110"
                           )} />
-                          <span className="text-[10px] font-black relative z-10">{room.id}</span>
+                          <span className={cn(
+                            "text-[10px] font-black relative z-10",
+                            room.status === 'occupied' ? "text-rose-600" : ""
+                          )}>{room.id}</span>
                           
-                          {room.status === 'available' && (
+                          {(room.status === 'available' || room.status === 'occupied') && (
                             <motion.div 
                               animate={{ scale: [1, 1.2, 1] }}
                               transition={{ duration: 1.5, repeat: Infinity }}
                               className="absolute top-2 right-2"
                             >
-                              <div className="w-2 h-2 bg-emerald-400 rounded-full shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
+                              <div className={cn(
+                                "w-2 h-2 rounded-full",
+                                room.status === 'available' 
+                                  ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" 
+                                  : "bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]"
+                              )} />
                             </motion.div>
                           )}
 
@@ -579,7 +587,7 @@ export default function PublicBooking() {
                 </div>
                 <div className="flex items-center gap-6 bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
                   <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 bg-slate-700 rounded-md" />
+                    <div className="w-4 h-4 bg-emerald-500 rounded-md" />
                     <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Available</span>
                   </div>
                   <div className="flex items-center gap-2">
