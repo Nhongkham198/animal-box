@@ -9,7 +9,7 @@ import {
   ChevronDown,
   PawPrint,
   Printer,
-  Upload,
+  Download,
   X,
   Camera,
   User,
@@ -35,17 +35,20 @@ import {
   updateDoc,
   addDoc,
   deleteDoc,
+  getDoc,
   serverTimestamp,
   getDocs,
   getDocsFromServer
 } from '../firebase';
 import { useAsyncError } from '../hooks/useAsyncError';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
+import { useClinic } from '../contexts/ClinicContext';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, differenceInYears, differenceInMonths } from 'date-fns';
 import { StatCard, Card } from './ui/Card';
 import AddPatientModal from './AddPatientModal';
+import { parsePetExcel, ExcelPetData } from '../lib/excelParser';
 
 interface Patient {
   id: string;
@@ -69,11 +72,13 @@ interface Owner {
   email?: string;
   address?: string;
   photoURL?: string;
+  petIds?: string[];
 }
 
 export default function Patients() {
   const throwError = useAsyncError();
   const { user, isAuthReady, isStaff } = useAuth();
+  const { setQuotaExceeded } = useClinic();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [ownersMap, setOwnersMap] = useState<Record<string, Owner>>({});
   const [searchQuery, setSearchQuery] = useState('');
@@ -81,6 +86,17 @@ export default function Patients() {
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [activeTab, setActiveTab] = useState<'history' | 'vaccines' | 'appointments' | 'timeline'>('history');
   const [timelineData, setTimelineData] = useState<any[]>([]);
+
+  const formatPhoneNumber = (phone: string | undefined | null) => {
+    if (!phone) return '-';
+    // Remove non-digits for checking
+    const cleaned = phone.trim().replace(/\D/g, '');
+    // If it's a numeric string that doesn't start with 0, prepend 0
+    if (cleaned.length > 0 && !cleaned.startsWith('0')) {
+      return '0' + cleaned;
+    }
+    return phone;
+  };
   const [isTimelineLoading, setIsTimelineLoading] = useState(false);
 
   const fetchTimeline = async (patientId: string) => {
@@ -129,6 +145,10 @@ export default function Patients() {
     }
   }, [selectedPatient, activeTab]);
   const [isAddPatientModalOpen, setIsAddPatientModalOpen] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [importProgress, setImportProgress] = useState({ current: 0, total: 0, percentage: 0 });
+  const importInputRef = useRef<HTMLInputElement>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [editPatientId, setEditPatientId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -151,48 +171,52 @@ export default function Patients() {
     }
   };
 
+  const refreshData = async () => {
+    if (!isAuthReady || !user || !isStaff) return;
+    
+    // We'll use onSnapshot in useEffect for real-time updates which is more pulse-friendly
+    // But for a manual "refresh" we can still use getDocs with cache preference
+  };
+
   useEffect(() => {
     if (!isAuthReady || !user || !isStaff) {
       if (isAuthReady && !isStaff) setLoading(false);
       return;
     }
 
-    const fetchPatients = async () => {
-      try {
-        console.log("Patients: Fetching from server...");
-        const q = query(collection(db, 'patients'), orderBy('createdAt', 'desc'));
-        const snap = await getDocsFromServer(q);
-        const pts = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Patient));
-        setPatients(pts);
-        setLoading(false);
-      } catch (err: any) {
-        if (err.message?.includes('permissions')) {
-          console.warn("Patients fetch denied (non-critical):", err);
-          setLoading(false);
-        } else {
-          console.error("Patients fetch error:", err);
-          handleFirestoreError(err, OperationType.LIST, 'patients');
-        }
+    setLoading(true);
+    
+    // Use onSnapshot for real-time updates and efficient caching
+    const qPatients = query(collection(db, 'patients'), orderBy('createdAt', 'desc'));
+    const unsubPatients = onSnapshot(qPatients, (snap) => {
+      const pts = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Patient));
+      setPatients(pts);
+      setLoading(false);
+    }, (err) => {
+      console.warn("Patients listener error:", err);
+      if (err.message.includes('quota') || err.message.includes('resource-exhausted')) {
+        setQuotaExceeded(true);
       }
-    };
+      setLoading(false);
+    });
 
-    const fetchOwners = async () => {
-      try {
-        console.log("Owners: Fetching from server...");
-        const snap = await getDocsFromServer(collection(db, 'owners'));
-        const map: Record<string, Owner> = {};
-        snap.docs.forEach(doc => {
-          map[doc.id] = { id: doc.id, ...doc.data() } as Owner;
-        });
-        setOwnersMap(map);
-      } catch (err) {
-        console.warn("Owners fetch warning (non-critical):", err);
-        handleFirestoreError(err, OperationType.LIST, 'owners');
+    const unsubOwners = onSnapshot(collection(db, 'owners'), (snap) => {
+      const map: Record<string, Owner> = {};
+      snap.docs.forEach(doc => {
+        map[doc.id] = { id: doc.id, ...doc.data() } as Owner;
+      });
+      setOwnersMap(map);
+    }, (err) => {
+      console.warn("Owners listener error:", err);
+      if (err.message.includes('quota') || err.message.includes('resource-exhausted')) {
+        setQuotaExceeded(true);
       }
-    };
+    });
 
-    fetchPatients();
-    fetchOwners();
+    return () => {
+      unsubPatients();
+      unsubOwners();
+    };
   }, [isAuthReady, user, isStaff]);
 
   const handleUpdatePhoto = async (patientId: string, photoURL: string) => {
@@ -303,6 +327,7 @@ export default function Patients() {
       const owner = ownersMap[id];
       return owner && (
         owner.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        formatPhoneNumber(owner.phone).includes(searchQuery) ||
         owner.phone.includes(searchQuery)
       );
     });
@@ -325,13 +350,146 @@ export default function Patients() {
   };
 
   const confirmDelete = async () => {
+    if (isDeleting) return;
+    setIsDeleting(true);
     try {
-      const deletePromises = Array.from(selectedIds).map(id => deleteDoc(doc(db, 'patients', id)));
-      await Promise.all(deletePromises);
+      const ids = Array.from(selectedIds);
+      const chunkSize = 20; // Small chunks for stability
+      
+      for (let i = 0; i < ids.length; i += chunkSize) {
+        const chunk = ids.slice(i, i + chunkSize);
+        await Promise.all(chunk.map(id => deleteDoc(doc(db, 'patients', id))));
+      }
+
       setSelectedIds(new Set());
       setIsDeleteConfirmOpen(false);
+      refreshData();
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, 'patients');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleExcelImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsImporting(true);
+    setImportProgress({ current: 0, total: 0, percentage: 0 });
+
+    try {
+      let allPetsToImport: any[] = [];
+      
+      // 1. Gather all data
+      for (let i = 0; i < files.length; i++) {
+        const buffer = await files[i].arrayBuffer();
+        const sheetPets = parsePetExcel(buffer);
+        allPetsToImport = [...allPetsToImport, ...sheetPets];
+      }
+
+      const total = allPetsToImport.length;
+      if (total === 0) {
+        alert("No valid pet records found.");
+        setIsImporting(false);
+        return;
+      }
+
+      setImportProgress(prev => ({ ...prev, total }));
+
+      // 2. Optmization: Fetch existing data ONCE to avoid repeated queries
+      const existingOwners = { ...ownersMap };
+      const existingPatientsHn = new Set(patients.filter(p => p.hn).map(p => p.hn));
+      const existingPatientsNameOwner = new Set(patients.map(p => `${p.name}_${p.ownerIds?.[0]}`));
+
+      let current = 0;
+      let importedCount = 0;
+      let skippedCount = 0;
+
+      for (const pet of allPetsToImport) {
+        // Find existing owner in memory first
+        let ownerId = Object.keys(existingOwners).find(oid => existingOwners[oid].phone === pet.ownerPhone);
+        
+        if (!ownerId) {
+          // If not in local memory, check DB just to be sure (or create)
+          const ownerQ = query(collection(db, 'owners'), where('phone', '==', pet.ownerPhone));
+          const ownerSnap = await getDocs(ownerQ);
+          
+          if (!ownerSnap.empty) {
+            ownerId = ownerSnap.docs[0].id;
+            existingOwners[ownerId] = { id: ownerId, ...ownerSnap.docs[0].data() } as Owner;
+          } else {
+            const ownerDoc = await addDoc(collection(db, 'owners'), {
+              name: pet.ownerName,
+              phone: pet.ownerPhone,
+              email: pet.ownerEmail,
+              petIds: [],
+              createdAt: serverTimestamp()
+            });
+            ownerId = ownerDoc.id;
+            existingOwners[ownerId] = { id: ownerId, name: pet.ownerName, phone: pet.ownerPhone } as Owner;
+          }
+        }
+
+        // Duplicate Check using in-memory maps
+        let isDuplicate = false;
+        if (pet.hn && existingPatientsHn.has(pet.hn)) isDuplicate = true;
+        if (!isDuplicate && existingPatientsNameOwner.has(`${pet.name}_${ownerId}`)) isDuplicate = true;
+
+        if (isDuplicate) {
+          skippedCount++;
+        } else {
+          // 3. Handle Patient (No duplicate found)
+          const patientDoc = await addDoc(collection(db, 'patients'), {
+            name: pet.name,
+            hn: pet.hn,
+            species: pet.species,
+            breed: pet.breed,
+            gender: pet.gender,
+            birthDate: pet.birthDate,
+            ownerIds: [ownerId],
+            microchip: pet.microchip,
+            drugAllergy: pet.drugAllergy,
+            note: pet.note,
+            sterilized: pet.sterilized,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+
+          // Add to local memory map for subsequent checks in this loop
+          if (pet.hn) existingPatientsHn.add(pet.hn);
+          existingPatientsNameOwner.add(`${pet.name}_${ownerId}`);
+
+          // 4. Update Owner's petIds
+          const ownerRef = doc(db, 'owners', ownerId);
+          const currentPetIds = existingOwners[ownerId]?.petIds || [];
+          if (!currentPetIds.includes(patientDoc.id)) {
+            const newPetIds = [...currentPetIds, patientDoc.id];
+            await updateDoc(ownerRef, { petIds: newPetIds });
+            existingOwners[ownerId].petIds = newPetIds;
+          }
+          importedCount++;
+        }
+
+        current++;
+        setImportProgress({
+          current,
+          total,
+          percentage: Math.round((current / total) * 100)
+        });
+      }
+
+      setTimeout(() => {
+        setIsImporting(false);
+        alert(`การนำเข้าเสร็จสิ้น!\n- นำเข้าใหม่: ${importedCount} รายการ\n- ข้อมูลซ้ำ (ข้าม): ${skippedCount} รายการ`);
+      }, 500);
+
+    } catch (err) {
+      console.error("Excel Import Error:", err);
+      alert("Failed to import Excel. Please check your internet or quota.");
+      setIsImporting(false);
+    } finally {
+      if (importInputRef.current) importInputRef.current.value = '';
     }
   };
 
@@ -356,6 +514,78 @@ export default function Patients() {
 
   return (
     <div className="space-y-6 relative">
+      {/* Import Progress Modal */}
+      <AnimatePresence>
+        {isImporting && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="bg-white rounded-[2.5rem] p-10 max-w-md w-full shadow-2xl border border-slate-100 text-center space-y-8"
+            >
+              <div className="relative w-32 h-32 mx-auto">
+                {/* Circular Progress (SVG) */}
+                <svg className="w-full h-full transform -rotate-90">
+                  <circle
+                    cx="64"
+                    cy="64"
+                    r="58"
+                    stroke="currentColor"
+                    strokeWidth="8"
+                    fill="transparent"
+                    className="text-slate-100"
+                  />
+                  <motion.circle
+                    cx="64"
+                    cy="64"
+                    r="58"
+                    stroke="currentColor"
+                    strokeWidth="8"
+                    fill="transparent"
+                    strokeDasharray="364.4"
+                    initial={{ strokeDashoffset: 364.4 }}
+                    animate={{ strokeDashoffset: 364.4 - (364.4 * importProgress.percentage) / 100 }}
+                    transition={{ duration: 0.5 }}
+                    className="text-[#00b4d8]"
+                  />
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-3xl font-black text-slate-800">{importProgress.percentage}%</span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">Importing Records</h3>
+                <p className="text-slate-500 font-medium italic">
+                  Processing {importProgress.current} of {importProgress.total} pets...
+                </p>
+              </div>
+
+              {/* Progress Bar */}
+              <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden">
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: `${importProgress.percentage}%` }}
+                  className="h-full bg-gradient-to-r from-[#00b4d8] to-[#90e0ef] shadow-[0_0_10px_rgba(0,180,216,0.3)]"
+                />
+              </div>
+
+              <div className="flex items-center justify-center gap-2 text-[#00b4d8] animate-pulse">
+                <div className="w-2 h-2 rounded-full bg-current" />
+                <span className="text-sm font-black uppercase tracking-widest">Please Wait</span>
+                <div className="w-2 h-2 rounded-full bg-current" />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Delete Confirmation Modal */}
       {isDeleteConfirmOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
@@ -378,9 +608,10 @@ export default function Patients() {
               </button>
               <button
                 onClick={confirmDelete}
-                className="flex-1 py-4 bg-rose-500 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-rose-600 transition-all shadow-lg shadow-rose-200"
+                disabled={isDeleting}
+                className="flex-1 py-4 bg-rose-500 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-rose-600 transition-all shadow-lg shadow-rose-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Delete
+                {isDeleting ? 'Deleting...' : 'Delete'}
               </button>
             </div>
           </div>
@@ -391,6 +622,22 @@ export default function Patients() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-900 uppercase tracking-tight">PET PROFILE LIST</h1>
         <div className="flex items-center gap-2">
+          <input 
+            type="file" 
+            ref={importInputRef} 
+            onChange={handleExcelImport} 
+            accept=".xlsx,.xls" 
+            multiple
+            className="hidden" 
+          />
+          <button 
+            onClick={() => importInputRef.current?.click()}
+            disabled={isImporting}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all text-sm shadow-sm bg-slate-100 text-slate-600 hover:bg-slate-200"
+          >
+            <Download className="w-4 h-4" />
+            {isImporting ? 'Importing...' : 'Import Excel'}
+          </button>
           <button 
             onClick={selectedIds.size === 1 ? handleEditSelected : () => setIsAddPatientModalOpen(true)}
             disabled={selectedIds.size > 1}
@@ -586,7 +833,7 @@ export default function Patients() {
                     <td className="px-8 py-4 text-slate-600">
                       {patient.ownerIds?.map((id, idx) => (
                         <div key={`owner-${id}-${idx}`}>
-                          <div>{ownersMap[id]?.phone}</div>
+                          <div>{formatPhoneNumber(ownersMap[id]?.phone)}</div>
                           <div className="text-xs text-slate-400">{ownersMap[id]?.email || ''}</div>
                         </div>
                       ))}
@@ -714,7 +961,7 @@ export default function Patients() {
                               <p className="text-sm font-bold text-slate-800 truncate">{owner.name}</p>
                               <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold">
                                 <Phone className="w-2.5 h-2.5" />
-                                <span>{owner.phone}</span>
+                                <span>{formatPhoneNumber(owner.phone)}</span>
                               </div>
                             </div>
                           </div>
@@ -735,7 +982,7 @@ export default function Patients() {
                 <button 
                   onClick={() => {
                     const firstOwner = ownersMap[selectedPatient.ownerIds?.[0]];
-                    if (firstOwner) alert('SMS Sent to ' + firstOwner.phone);
+                    if (firstOwner) alert('SMS Sent to ' + formatPhoneNumber(firstOwner.phone));
                   }}
                   className="flex-1 flex items-center justify-center gap-2 py-3 bg-emerald-500 text-white rounded-xl font-bold hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-100"
                 >

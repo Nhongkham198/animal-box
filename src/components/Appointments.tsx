@@ -26,6 +26,7 @@ import {
 } from '../firebase';
 import { useAsyncError } from '../hooks/useAsyncError';
 import { useAuth } from '../contexts/AuthContext';
+import { useClinic } from '../contexts/ClinicContext';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 import AddPatientModal from './AddPatientModal';
@@ -50,6 +51,7 @@ interface AppointmentsProps {
 export default function Appointments({ setActiveView }: AppointmentsProps) {
   const throwError = useAsyncError();
   const { user, isAuthReady, isStaff } = useAuth();
+  const { setQuotaExceeded } = useClinic();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -67,10 +69,13 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
       setLoading(false);
     }, (err) => {
       console.warn("Appointments listener restricted:", err.message);
+      if (err.message.includes('quota') || err.message.includes('resource-exhausted')) {
+        setQuotaExceeded(true);
+      }
       setLoading(false);
     });
     return () => unsubscribe();
-  }, [isAuthReady, user, isStaff]);
+  }, [isAuthReady, user, isStaff, setQuotaExceeded]);
 
   const handleUpdateStatus = async (apptId: string, newStatus: string) => {
     try {

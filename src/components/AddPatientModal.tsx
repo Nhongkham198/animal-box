@@ -57,6 +57,16 @@ export default function AddPatientModal({ isOpen, onClose, editPatientId }: AddP
   const throwError = useAsyncError();
   const { user, isAuthReady, isAdmin } = useAuth();
   const [loading, setLoading] = useState(false);
+
+  const formatPhoneNumber = (phone: string | undefined | null) => {
+    if (!phone) return '';
+    const cleaned = phone.trim().replace(/\D/g, '');
+    if (cleaned.length > 0 && !cleaned.startsWith('0')) {
+      return '0' + cleaned;
+    }
+    return phone;
+  };
+
   const [formData, setFormData] = useState({
     hn: '',
     name: '',
@@ -871,7 +881,7 @@ export default function AddPatientModal({ isOpen, onClose, editPatientId }: AddP
                                 >
                                   <div>
                                     <div className="font-black text-slate-800">{result.name}</div>
-                                    <div className="text-xs font-bold text-slate-500">{result.phone}</div>
+                                    <div className="text-xs font-bold text-slate-500">{formatPhoneNumber(result.phone)}</div>
                                   </div>
                                   <div className="text-[10px] font-black text-indigo-500 uppercase tracking-widest bg-indigo-50 px-2 py-1 rounded-lg">
                                     Select

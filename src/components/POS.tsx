@@ -55,6 +55,15 @@ export default function POS() {
   const [isCheckout, setIsCheckout] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'transfer'>('cash');
 
+  const formatPhoneNumber = (phone: string | undefined | null) => {
+    if (!phone) return '-';
+    const cleaned = phone.trim().replace(/\D/g, '');
+    if (cleaned.length > 0 && !cleaned.startsWith('0')) {
+      return '0' + cleaned;
+    }
+    return phone;
+  };
+
   useEffect(() => {
     if (!isAuthReady || !user || !isStaff) return;
 
@@ -214,7 +223,8 @@ export default function POS() {
           {searchQuery && !selectedOwner && (
             <div className="grid grid-cols-2 gap-4">
               {patients.filter(p => 
-                p.ownerPhone?.includes(searchQuery) || 
+                formatPhoneNumber(p.ownerPhone).includes(searchQuery) || 
+                p.ownerPhone?.includes(searchQuery) ||
                 p.name?.toLowerCase().includes(searchQuery.toLowerCase())
               ).slice(0, 4).map(p => (
                 <button 
@@ -227,7 +237,7 @@ export default function POS() {
                   </div>
                   <div>
                     <p className="font-bold text-slate-800">{p.ownerName}</p>
-                    <p className="text-xs text-slate-400">{p.ownerPhone}</p>
+                    <p className="text-xs text-slate-400">{formatPhoneNumber(p.ownerPhone)}</p>
                   </div>
                 </button>
               ))}
@@ -243,7 +253,7 @@ export default function POS() {
                   </div>
                   <div>
                     <p className="font-black text-slate-800">{selectedOwner.name}</p>
-                    <p className="text-xs font-bold text-[#00b4d8] uppercase tracking-widest">{selectedOwner.phone}</p>
+                    <p className="text-xs font-bold text-[#00b4d8] uppercase tracking-widest">{formatPhoneNumber(selectedOwner.phone)}</p>
                   </div>
                 </div>
                 <button onClick={() => { setSelectedOwner(null); setOwnerPets([]); setCart([]); }} className="p-2 hover:bg-white rounded-lg text-slate-400">

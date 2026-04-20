@@ -105,7 +105,7 @@ export default function App() {
 
 function AppContent() {
   const { user, loading, isAuthReady, authError } = useAuth();
-  const { clinicName } = useClinic();
+  const { clinicName, quotaExceeded } = useClinic();
   const [activeView, setActiveView] = useState<View>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
@@ -115,6 +115,8 @@ function AppContent() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [loginMode, setLoginMode] = useState<'login' | 'signup'>('login');
 
   const handleLogin = async () => {
     setLocalAuthError(null);
@@ -132,22 +134,35 @@ function AppContent() {
     }
   };
 
-  const handleEmailLogin = async (e: React.FormEvent) => {
+  const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) return;
     
     setIsSubmitting(true);
     setLocalAuthError(null);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (error: any) {
-      console.error("Email login failed:", error);
-      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-        setLocalAuthError("Invalid email or password. Please try again.");
-      } else if (error.code === 'auth/too-many-requests') {
-        setLocalAuthError("Too many failed attempts. Please try again later.");
+      if (loginMode === 'login') {
+        await signInWithEmailAndPassword(auth, email, password);
       } else {
-        setLocalAuthError(`Login failed: ${error.message}`);
+        const { createUserWithEmailAndPassword } = await import('./firebase');
+        await createUserWithEmailAndPassword(auth, email, password);
+        alert("Account created successfully! You can now login.");
+        setLoginMode('login');
+      }
+    } catch (error: any) {
+      console.error("Auth failed:", error);
+      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        if (loginMode === 'login') {
+          setLocalAuthError("Invalid email or password. If you haven't created an account in this new project yet, please use 'Sign Up'.");
+        } else {
+          setLocalAuthError("Invalid credentials. Please ensure your password is at least 6 characters.");
+        }
+      } else if (error.code === 'auth/email-already-in-use') {
+        setLocalAuthError("This email is already registered. Please login instead.");
+      } else if (error.code === 'auth/too-many-requests') {
+        setLocalAuthError("Too many attempts. Please try again later.");
+      } else {
+        setLocalAuthError(`Error: ${error.message}`);
       }
     } finally {
       setIsSubmitting(false);
@@ -247,9 +262,32 @@ function AppContent() {
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
-                onSubmit={handleEmailLogin}
+                onSubmit={handleEmailAuth}
                 className="space-y-4 text-left"
               >
+                <div className="flex gap-4 mb-6 p-1 bg-slate-100 rounded-2xl">
+                  <button
+                    type="button"
+                    onClick={() => setLoginMode('login')}
+                    className={cn(
+                      "flex-1 py-2 text-xs font-black uppercase tracking-widest rounded-xl transition-all",
+                      loginMode === 'login' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    Login
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLoginMode('signup')}
+                    className={cn(
+                      "flex-1 py-2 text-xs font-black uppercase tracking-widest rounded-xl transition-all",
+                      loginMode === 'signup' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    Sign Up
+                  </button>
+                </div>
+
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Email Address</label>
                   <input 
@@ -277,7 +315,7 @@ function AppContent() {
                   disabled={isSubmitting}
                   className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-semibold py-4 px-6 rounded-2xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-3"
                 >
-                  {isSubmitting ? 'Signing in...' : 'Sign in with Email'}
+                  {isSubmitting ? 'Processing...' : loginMode === 'login' ? 'Sign in with Email' : 'Create Account'}
                 </button>
                 <button 
                   type="button"
@@ -313,6 +351,23 @@ function AppContent() {
 
         {/* Main Content */}
         <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          {quotaExceeded && (
+            <div className="bg-rose-500 text-white px-6 py-3 flex items-center justify-between gap-4 animate-in slide-in-from-top duration-300">
+              <div className="flex items-center gap-3">
+                <AlertCircle className="w-5 h-5 shrink-0" />
+                <div className="text-xs md:text-sm font-bold uppercase tracking-tight">
+                  <span className="hidden md:inline">SYSTEM ALERT: </span> 
+                  Firebase Quota Exceeded (50,000 Free Reads Used). Features may be disabled until tomorrow.
+                </div>
+              </div>
+              <button 
+                onClick={() => window.open('https://firebase.google.com/pricing', '_blank')}
+                className="bg-white/10 hover:bg-white/20 px-3 py-1 rounded text-[10px] font-black uppercase transition-all whitespace-nowrap"
+              >
+                Learn More
+              </button>
+            </div>
+          )}
           <Header activeView={activeView} setActiveView={setActiveView} />
 
           {/* View Content */}
@@ -375,6 +430,16 @@ function AppContent() {
           
           <div className="flex flex-col-reverse gap-3 opacity-0 translate-y-10 pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto transition-all duration-300">
             <button 
+              onClick={() => setActiveView('dashboard')}
+              className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all"
+            >
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">Home</span>
+              <div className="w-8 h-8 bg-blue-50 text-[#00b4d8] rounded-lg flex items-center justify-center">
+                <LayoutDashboard className="w-4 h-4" />
+              </div>
+            </button>
+
+            <button 
               onClick={() => setActiveView('add-pet')}
               className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all"
             >
@@ -385,7 +450,7 @@ function AppContent() {
             </button>
             
             <button 
-              onClick={() => setActiveView('add-appointment')}
+              onClick={() => setActiveView('appointments')}
               className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all"
             >
               <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">Appointment</span>

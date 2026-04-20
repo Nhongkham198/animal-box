@@ -1,10 +1,10 @@
 {
-  "projectId": "gen-lang-client-0419290769",
-  "appId": "1:948494898823:web:978fc3bb1e7376bcca4a22",
-  "apiKey": "AIzaSyBTWqPW0gGQ9OTr2_yUX6RdsC-uzM832qk",
-  "authDomain": "gen-lang-client-0419290769.firebaseapp.com",
+  "projectId": "petdata-72204",
+  "appId": "1:576864434091:web:a9f718cdffe30886ff44ee",
+  "apiKey": "AIzaSyC5Ky6VoOM2ezh00ilst4i1bSdl2ai_Xko",
+  "authDomain": "petdata-72204.firebaseapp.com",
   "firestoreDatabaseId": "ai-studio-2b6071da-23a4-46f9-9af1-048c6de6e439",
-  "storageBucket": "gen-lang-client-0419290769.firebasestorage.app",
-  "messagingSenderId": "948494898823",
+  "storageBucket": "petdata-72204.firebasestorage.app",
+  "messagingSenderId": "576864434091",
   "measurementId": ""
 }

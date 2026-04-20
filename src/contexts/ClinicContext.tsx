@@ -7,6 +7,8 @@ interface ClinicContextType {
   setClinicAddress: (address: string) => void;
   clinicPhone: string;
   setClinicPhone: (phone: string) => void;
+  quotaExceeded: boolean;
+  setQuotaExceeded: (exceeded: boolean) => void;
 }
 
 const ClinicContext = createContext<ClinicContextType | undefined>(undefined);
@@ -15,6 +17,7 @@ export function ClinicProvider({ children }: { children: ReactNode }) {
   const [clinicName, setClinicName] = useState('Animal Box');
   const [clinicAddress, setClinicAddress] = useState('123 Clinic St, Bangkok, Thailand');
   const [clinicPhone, setClinicPhone] = useState('02-123-4567');
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
 
   const value = {
     clinicName,
@@ -23,6 +26,8 @@ export function ClinicProvider({ children }: { children: ReactNode }) {
     setClinicAddress,
     clinicPhone,
     setClinicPhone,
+    quotaExceeded,
+    setQuotaExceeded,
   };
 
   return <ClinicContext.Provider value={value}>{children}</ClinicContext.Provider>;

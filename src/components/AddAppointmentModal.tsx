@@ -47,6 +47,16 @@ export default function AddAppointmentModal({ isOpen, onClose }: AddAppointmentM
   const throwError = useAsyncError();
   const { user, isAuthReady, isStaff } = useAuth();
   const [loading, setLoading] = useState(false);
+
+  const formatPhoneNumber = (phone: string | undefined | null) => {
+    if (!phone) return '';
+    const cleaned = phone.trim().replace(/\D/g, '');
+    if (cleaned.length > 0 && !cleaned.startsWith('0')) {
+      return '0' + cleaned;
+    }
+    return phone;
+  };
+
   const [step, setStep] = useState(1);
   
   const [formData, setFormData] = useState({
@@ -206,8 +216,9 @@ export default function AddAppointmentModal({ isOpen, onClose }: AddAppointmentM
 
       if (formData.sendSms) {
         // Simulate SMS sending
-        console.log(`Sending SMS to ${formData.ownerPhone}: "Dear ${formData.ownerName}, please confirm your appointment for ${formData.patientName} on ${formData.date} at ${formData.time}. Click here: https://clinic.app/confirm"`);
-        alert(`SMS confirmation sent to ${formData.ownerPhone}`);
+        const formattedPhone = formatPhoneNumber(formData.ownerPhone);
+        console.log(`Sending SMS to ${formattedPhone}: "Dear ${formData.ownerName}, please confirm your appointment for ${formData.patientName} on ${formData.date} at ${formData.time}. Click here: https://clinic.app/confirm"`);
+        alert(`SMS confirmation sent to ${formattedPhone}`);
       }
 
       onClose();

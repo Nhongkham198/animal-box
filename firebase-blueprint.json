@@ -199,6 +199,38 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["values"]
+    },
+    "PetRoom": {
+      "title": "Pet Accommodation Room",
+      "description": "Rooms in the pet condo buildings.",
+      "type": "object",
+      "properties": {
+        "building": { "type": "string", "enum": ["A", "B"] },
+        "floor": { "type": "number" },
+        "roomNumber": { "type": "number" },
+        "status": { "type": "string", "enum": ["available", "occupied", "maintenance"] },
+        "pricePerNight": { "type": "number" }
+      },
+      "required": ["building", "floor", "roomNumber", "status"]
+    },
+    "RoomBooking": {
+      "title": "Room Booking",
+      "description": "Bookings for the pet rooms.",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string" },
+        "patientId": { "type": "string" },
+        "petName": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "ownerPhone": { "type": "string" },
+        "checkIn": { "type": "string", "format": "date-time" },
+        "checkOut": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["pending_payment", "confirmed", "checked_in", "checked_out", "cancelled"] },
+        "totalAmount": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomId", "patientId", "checkIn", "checkOut", "status"]
     }
   },
   "firestore": {
@@ -245,6 +277,14 @@
     "/settings/{settingId}": {
       "schema": "Setting",
       "description": "Application configuration and lists."
+    },
+    "/pet_rooms/{roomId}": {
+      "schema": "PetRoom",
+      "description": "Rooms in the pet condo buildings."
+    },
+    "/room_bookings/{bookingId}": {
+      "schema": "RoomBooking",
+      "description": "Bookings for the pet rooms."
     }
   }
 }

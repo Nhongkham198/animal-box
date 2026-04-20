@@ -4,6 +4,7 @@ import {
   GoogleAuthProvider, 
   signInWithPopup, 
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   signOut, 
   onAuthStateChanged, 
   User as FirebaseUser 
@@ -92,43 +93,46 @@ export interface FirestoreErrorInfo {
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errMessage = error instanceof Error ? error.message : String(error);
   const isPermissionError = errMessage.toLowerCase().includes('permission') || errMessage.toLowerCase().includes('insufficient');
+  const isQuotaError = errMessage.toLowerCase().includes('quota') || errMessage.toLowerCase().includes('resource-exhausted');
 
-  const errInfo: FirestoreErrorInfo = {
-    error: errMessage,
+  // Explicitly extract primitives to avoid circular structures
+  const errInfo = {
+    error: isQuotaError ? 'QUOTA_EXCEEDED' : String(errMessage),
+    operationType: String(operationType),
+    path: path ? String(path) : null,
     authInfo: {
-      userId: typeof auth !== 'undefined' ? auth.currentUser?.uid : undefined,
-      email: typeof auth !== 'undefined' ? auth.currentUser?.email : undefined,
-      emailVerified: typeof auth !== 'undefined' ? auth.currentUser?.emailVerified : undefined,
-      isAnonymous: typeof auth !== 'undefined' ? auth.currentUser?.isAnonymous : undefined,
-      tenantId: typeof auth !== 'undefined' ? auth.currentUser?.tenantId : undefined,
-      providerInfo: typeof auth !== 'undefined' ? auth.currentUser?.providerData.map(provider => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
-      })) || [] : []
-    },
-    operationType,
-    path
-  }
+      userId: auth.currentUser?.uid ? String(auth.currentUser.uid) : undefined,
+      email: auth.currentUser?.email ? String(auth.currentUser.email) : undefined,
+      emailVerified: Boolean(auth.currentUser?.emailVerified),
+      isAnonymous: Boolean(auth.currentUser?.isAnonymous),
+      tenantId: auth.currentUser?.tenantId ? String(auth.currentUser.tenantId) : undefined,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: String(provider.providerId),
+        displayName: provider.displayName ? String(provider.displayName) : null,
+        email: provider.email ? String(provider.email) : null,
+        photoUrl: provider.photoURL ? String(provider.photoURL) : null
+      })) || []
+    }
+  };
+  
+  const errString = JSON.stringify(errInfo);
   
   if (isPermissionError) {
-    console.warn('Firestore Permission Warning: ', JSON.stringify(errInfo));
-    // For WRITE operations, we MUST throw so the UI knows it failed
+    console.warn('Firestore Permission Warning: ', errString);
     if (operationType === OperationType.CREATE || operationType === OperationType.UPDATE || operationType === OperationType.DELETE || operationType === OperationType.WRITE) {
-      throw new Error(JSON.stringify(errInfo));
+      throw new Error(errString);
     }
-    // For LIST/GET, we can return silently to avoid UI crashes
     return;
   }
   
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  console.error('Firestore Error: ', errString);
+  throw new Error(errString);
 }
 
 export { 
   signInWithPopup, 
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   signOut, 
   onAuthStateChanged, 
   doc, 

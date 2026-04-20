@@ -36,15 +36,22 @@ app.get("/auth/google/callback", async (req, res) => {
   const { code } = req.query;
   try {
     const { tokens } = await oauth2Client.getToken(code as string);
-    // In a real app, you'd store these tokens securely (e.g., in Firestore)
-    // For now, we'll send a success message to the client
+    // Sanitize tokens to avoid circular structures and only send what's needed
+    const safeTokens = {
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      scope: tokens.scope,
+      token_type: tokens.token_type,
+      expiry_date: tokens.expiry_date,
+      id_token: tokens.id_token
+    };
     
     res.send(`
       <html>
         <body>
           <script>
             if (window.opener) {
-              window.opener.postMessage({ type: 'GOOGLE_AUTH_SUCCESS', tokens: ${JSON.stringify(tokens)} }, '*');
+              window.opener.postMessage({ type: 'GOOGLE_AUTH_SUCCESS', tokens: ${JSON.stringify(safeTokens)} }, '*');
               window.close();
             } else {
               window.location.href = '/';

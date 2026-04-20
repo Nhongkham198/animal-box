@@ -42,6 +42,7 @@ import {
 } from '../firebase';
 import { useAsyncError } from '../hooks/useAsyncError';
 import { useAuth } from '../contexts/AuthContext';
+import { useClinic } from '../contexts/ClinicContext';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import AddAppointmentModal from './AddAppointmentModal';
@@ -65,6 +66,7 @@ interface CalendarViewProps {
 export default function CalendarView({ setActiveView }: CalendarViewProps) {
   const throwError = useAsyncError();
   const { user, isAuthReady, isStaff } = useAuth();
+  const { setQuotaExceeded } = useClinic();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -94,11 +96,14 @@ export default function CalendarView({ setActiveView }: CalendarViewProps) {
       setLoading(false);
     }, (err) => {
       console.warn("CalendarView appointments listener restricted:", err.message);
+      if (err.message.includes('quota') || err.message.includes('resource-exhausted')) {
+        setQuotaExceeded(true);
+      }
       setLoading(false);
     });
 
     return () => unsubscribe();
-  }, [currentMonth, isAuthReady, user, isStaff]);
+  }, [currentMonth, isAuthReady, user, isStaff, setQuotaExceeded]);
 
   const handleUpdateAppointment = async () => {
     if (!selectedAppointment) return;
