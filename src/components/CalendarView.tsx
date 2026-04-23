@@ -13,7 +13,8 @@ import {
   FileText,
   Trash2,
   Save,
-  AlertCircle
+  AlertCircle,
+  Droplets
 } from 'lucide-react';
 import { 
   format, 
@@ -243,13 +244,22 @@ export default function CalendarView({ setActiveView }: CalendarViewProps) {
                     e.stopPropagation();
                     setSelectedAppointment(app);
                   }}
-                  className="text-[10px] p-1.5 rounded bg-white border border-slate-100 shadow-sm hover:border-[#00b4d8] hover:bg-cyan-50/30 transition-all cursor-pointer truncate"
+                  className={cn(
+                    "text-[10px] p-1.5 rounded bg-white border shadow-sm transition-all cursor-pointer truncate",
+                    app.activities?.includes('Bathing') || app.activities?.includes('อาบน้ำ') 
+                      ? "border-sky-100 hover:border-sky-400 hover:bg-sky-50/50" 
+                      : "border-slate-100 hover:border-[#00b4d8] hover:bg-cyan-50/30"
+                  )}
                 >
                   <div className="flex items-center gap-1 font-bold text-slate-700">
-                    <PawPrint className="w-2 h-2 text-[#00b4d8]" />
+                    {app.activities?.includes('Bathing') || app.activities?.includes('อาบน้ำ') ? (
+                      <Droplets className="w-2 h-2 text-sky-500" />
+                    ) : (
+                      <PawPrint className="w-2 h-2 text-[#00b4d8]" />
+                    )}
                     {app.patientName}
                   </div>
-                  <div className="text-slate-400 truncate">{app.activities}</div>
+                  <div className="text-slate-400 truncate text-[9px]">{app.activities}</div>
                 </div>
               ))}
               {dayAppointments.length > 3 && (
@@ -337,10 +347,14 @@ export default function CalendarView({ setActiveView }: CalendarViewProps) {
 
                 {/* Details Grid */}
                 <div className="grid grid-cols-2 gap-6">
-                  <div className="space-y-1">
+                  <div className="col-span-2 space-y-1">
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Activity</p>
                     <div className="flex items-center gap-2 text-slate-700 font-bold">
-                      <Stethoscope className="w-4 h-4 text-[#00b4d8]" />
+                      {selectedAppointment.activities?.includes('Bathing') || selectedAppointment.activities?.includes('อาบน้ำ') ? (
+                        <Droplets className="w-4 h-4 text-sky-500" />
+                      ) : (
+                        <Stethoscope className="w-4 h-4 text-[#00b4d8]" />
+                      )}
                       {selectedAppointment.activities}
                     </div>
                   </div>

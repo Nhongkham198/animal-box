@@ -27,6 +27,17 @@ export default function HospitalProfile() {
     clinicName, setClinicName, 
     clinicAddress, setClinicAddress, 
     clinicPhone, setClinicPhone,
+    clinicSupportEmail, setClinicSupportEmail,
+    clinicHours, setClinicHours,
+    hospitalId, setHospitalId,
+    website, setWebsite,
+    lineId, setLineId,
+    facebook, setFacebook,
+    instagram, setInstagram,
+    prefixUsername, setPrefixUsername,
+    noTagMax, setNoTagMax,
+    bronzeMax, setBronzeMax,
+    silverMax, setSilverMax,
     clinicMapQuery, setClinicMapQuery
   } = useClinic();
   const { user, isAdmin } = useAuth();
@@ -36,6 +47,17 @@ export default function HospitalProfile() {
     name: clinicName,
     address: clinicAddress,
     phone: clinicPhone,
+    supportEmail: clinicSupportEmail,
+    hours: clinicHours,
+    id: hospitalId,
+    website: website,
+    lineId: lineId,
+    facebook: facebook,
+    instagram: instagram,
+    prefix: prefixUsername,
+    noTagMax: noTagMax,
+    bronzeMax: bronzeMax,
+    silverMax: silverMax,
     mapQuery: clinicMapQuery
   });
 
@@ -74,6 +96,17 @@ export default function HospitalProfile() {
     setClinicName(editData.name);
     setClinicAddress(editData.address);
     setClinicPhone(editData.phone);
+    setClinicSupportEmail(editData.supportEmail);
+    setClinicHours(editData.hours);
+    setHospitalId(editData.id);
+    setWebsite(editData.website);
+    setLineId(editData.lineId);
+    setFacebook(editData.facebook);
+    setInstagram(editData.instagram);
+    setPrefixUsername(editData.prefix);
+    setNoTagMax(Number(editData.noTagMax));
+    setBronzeMax(Number(editData.bronzeMax));
+    setSilverMax(Number(editData.silverMax));
     setClinicMapQuery(editData.mapQuery);
     setIsEditing(false);
   };
@@ -137,28 +170,72 @@ export default function HospitalProfile() {
             <div className="px-8 pb-8 space-y-4">
               <div className="border-t border-slate-50 pt-4">
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Hospital ID</p>
-                <p className="font-bold text-slate-700">878</p>
+                {isEditing ? (
+                  <input 
+                    className="font-bold text-slate-700 w-full border-b border-indigo-200 focus:outline-none"
+                    value={editData.id}
+                    onChange={e => setEditData({...editData, id: e.target.value})}
+                  />
+                ) : (
+                  <p className="font-bold text-slate-700">{hospitalId}</p>
+                )}
               </div>
               <div>
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Username</p>
                 <p className="font-bold text-slate-700">{user?.email}</p>
               </div>
               <div className="space-y-3 pt-2">
-                <div className="flex items-center gap-3 text-slate-400 hover:text-[#00b4d8] cursor-pointer transition-colors">
+                <div className="flex items-center gap-3 text-slate-400 hover:text-[#00b4d8] transition-colors">
                   <Globe className="w-4 h-4" />
-                  <span className="text-sm font-medium">Website</span>
+                  {isEditing ? (
+                    <input 
+                      className="text-sm font-medium w-full border-b border-indigo-200 focus:outline-none"
+                      placeholder="Website"
+                      value={editData.website}
+                      onChange={e => setEditData({...editData, website: e.target.value})}
+                    />
+                  ) : (
+                    <span className={cn("text-sm font-medium", !website && "italic opacity-50")}>{website || "Website"}</span>
+                  )}
                 </div>
-                <div className="flex items-center gap-3 text-slate-400 hover:text-[#00b4d8] cursor-pointer transition-colors">
+                <div className="flex items-center gap-3 text-slate-400 hover:text-[#00b4d8] transition-colors">
                   <MessageCircle className="w-4 h-4" />
-                  <span className="text-sm font-medium">Line ID</span>
+                  {isEditing ? (
+                    <input 
+                      className="text-sm font-medium w-full border-b border-indigo-200 focus:outline-none"
+                      placeholder="Line ID"
+                      value={editData.lineId}
+                      onChange={e => setEditData({...editData, lineId: e.target.value})}
+                    />
+                  ) : (
+                    <span className={cn("text-sm font-medium", !lineId && "italic opacity-50")}>{lineId || "Line ID"}</span>
+                  )}
                 </div>
-                <div className="flex items-center gap-3 text-slate-400 hover:text-[#00b4d8] cursor-pointer transition-colors">
+                <div className="flex items-center gap-3 text-slate-400 hover:text-[#00b4d8] transition-colors">
                   <Facebook className="w-4 h-4" />
-                  <span className="text-sm font-medium">Facebook</span>
+                  {isEditing ? (
+                    <input 
+                      className="text-sm font-medium w-full border-b border-indigo-200 focus:outline-none"
+                      placeholder="Facebook"
+                      value={editData.facebook}
+                      onChange={e => setEditData({...editData, facebook: e.target.value})}
+                    />
+                  ) : (
+                    <span className={cn("text-sm font-medium", !facebook && "italic opacity-50")}>{facebook || "Facebook"}</span>
+                  )}
                 </div>
-                <div className="flex items-center gap-3 text-slate-400 hover:text-[#00b4d8] cursor-pointer transition-colors">
+                <div className="flex items-center gap-3 text-slate-400 hover:text-[#00b4d8] transition-colors">
                   <Instagram className="w-4 h-4" />
-                  <span className="text-sm font-medium">Instagram</span>
+                  {isEditing ? (
+                    <input 
+                      className="text-sm font-medium w-full border-b border-indigo-200 focus:outline-none"
+                      placeholder="Instagram"
+                      value={editData.instagram}
+                      onChange={e => setEditData({...editData, instagram: e.target.value})}
+                    />
+                  ) : (
+                    <span className={cn("text-sm font-medium", !instagram && "italic opacity-50")}>{instagram || "Instagram"}</span>
+                  )}
                 </div>
               </div>
             </div>
@@ -167,28 +244,18 @@ export default function HospitalProfile() {
           {/* Prefix Card */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8">
             <h3 className="text-sm font-black text-slate-900 mb-4 uppercase tracking-wider">Prefix username</h3>
-            <p className="text-2xl font-bold text-slate-700 mb-2">-</p>
+            {isEditing ? (
+              <input 
+                className="text-2xl font-bold text-slate-700 mb-2 w-full border-b border-indigo-500 focus:outline-none"
+                value={editData.prefix}
+                onChange={e => setEditData({...editData, prefix: e.target.value})}
+              />
+            ) : (
+              <p className="text-2xl font-bold text-slate-700 mb-2">{prefixUsername}</p>
+            )}
             <p className="text-[10px] text-slate-400 leading-relaxed">
               ตั้งค่าคำนำหน้า Username Staff ที่ใช้งานโรงพยาบาลนี้ คำนำหน้าจะไม่ซ้ำกันในระบบ VRemind
             </p>
-          </div>
-
-          {/* Plan Card */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8">
-            <h3 className="text-sm font-black text-slate-900 mb-6 uppercase tracking-wider">Plan/Credit</h3>
-            <div className="space-y-4 mb-8">
-              <div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Plan</p>
-                <p className="font-black text-slate-900">Free</p>
-              </div>
-              <div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Credit Available</p>
-                <p className="font-black text-slate-900">0 Credits</p>
-              </div>
-            </div>
-            <button className="w-full py-3 bg-[#00b4d8] text-white rounded-xl font-bold hover:bg-[#0096b1] transition-all shadow-md">
-              Hospital Profile iTaam
-            </button>
           </div>
         </div>
 
@@ -201,7 +268,15 @@ export default function HospitalProfile() {
             <div className="space-y-6">
               <div>
                 <p className="text-xs font-bold text-slate-400 mb-2">อีเมล์ของสถานพยาบาลสำหรับลูกค้า</p>
-                <p className="font-bold text-slate-700">ixohoxi_s@hotmail.com</p>
+                {isEditing ? (
+                  <input 
+                    className="w-full bg-slate-50 border-none rounded-lg py-2 px-3 focus:ring-2 focus:ring-indigo-500 font-bold text-slate-700"
+                    value={editData.supportEmail}
+                    onChange={e => setEditData({...editData, supportEmail: e.target.value})}
+                  />
+                ) : (
+                  <p className="font-bold text-slate-700">{clinicSupportEmail}</p>
+                )}
               </div>
               <div>
                 <p className="text-xs font-bold text-slate-400 mb-2">เบอร์ติดต่อสถานพยาบาลสำหรับลูกค้า</p>
@@ -219,7 +294,18 @@ export default function HospitalProfile() {
               </div>
               <div>
                 <p className="text-xs font-bold text-slate-400 mb-2">เวลาทำการ</p>
-                <p className="font-bold text-slate-300 italic">ไม่ได้ระบุ</p>
+                {isEditing ? (
+                  <input 
+                    className="w-full bg-slate-50 border-none rounded-lg py-2 px-3 focus:ring-2 focus:ring-indigo-500 font-bold text-slate-700"
+                    placeholder="เช่น : เปิดทุกวัน 08:00 - 20:00"
+                    value={editData.hours}
+                    onChange={e => setEditData({...editData, hours: e.target.value})}
+                  />
+                ) : (
+                  <p className={cn("font-bold", clinicHours ? "text-slate-700" : "text-slate-300 italic")}>
+                    {clinicHours || "ไม่ได้ระบุ"}
+                  </p>
+                )}
               </div>
 
               <div className="pt-4">
@@ -320,7 +406,16 @@ export default function HospitalProfile() {
                     <td className="p-6 text-slate-500">ช่วงการใช้จ่าย <span className="mx-2">น้อยกว่าเท่ากับ</span></td>
                     <td className="p-6">
                       <div className="flex items-center gap-4 justify-end">
-                        <div className="px-4 py-2 bg-slate-50 rounded-lg font-bold text-slate-400 w-32 text-center">300</div>
+                        {isEditing ? (
+                          <input 
+                            type="number"
+                            className="px-4 py-2 bg-slate-50 rounded-lg font-bold text-indigo-600 w-32 text-center border-none focus:ring-2 focus:ring-indigo-500"
+                            value={editData.noTagMax}
+                            onChange={e => setEditData({...editData, noTagMax: Number(e.target.value)})}
+                          />
+                        ) : (
+                          <div className="px-4 py-2 bg-slate-50 rounded-lg font-bold text-slate-400 w-32 text-center">{noTagMax}</div>
+                        )}
                         <span className="font-black text-slate-900">THB</span>
                       </div>
                     </td>
@@ -337,9 +432,20 @@ export default function HospitalProfile() {
                     <td className="p-6 text-slate-500">ช่วงการใช้จ่าย <span className="mx-2">มากกว่า</span></td>
                     <td className="p-6">
                       <div className="flex items-center gap-4 justify-end">
-                        <div className="px-4 py-2 bg-slate-50 rounded-lg font-bold text-slate-400 w-24 text-center">300</div>
+                        <div className="px-4 py-2 bg-slate-50 rounded-lg font-bold text-slate-400 w-24 text-center">
+                          {isEditing ? editData.noTagMax : noTagMax}
+                        </div>
                         <span className="text-slate-400">น้อยกว่าเท่ากับ</span>
-                        <div className="px-4 py-2 bg-slate-50 rounded-lg font-bold text-slate-400 w-24 text-center">2000</div>
+                        {isEditing ? (
+                          <input 
+                            type="number"
+                            className="px-4 py-2 bg-slate-50 rounded-lg font-bold text-indigo-600 w-24 text-center border-none focus:ring-2 focus:ring-indigo-500"
+                            value={editData.bronzeMax}
+                            onChange={e => setEditData({...editData, bronzeMax: Number(e.target.value)})}
+                          />
+                        ) : (
+                          <div className="px-4 py-2 bg-slate-50 rounded-lg font-bold text-slate-400 w-24 text-center">{bronzeMax}</div>
+                        )}
                         <span className="font-black text-slate-900">THB</span>
                       </div>
                     </td>
@@ -356,9 +462,20 @@ export default function HospitalProfile() {
                     <td className="p-6 text-slate-500">ช่วงการใช้จ่าย <span className="mx-2">มากกว่า</span></td>
                     <td className="p-6">
                       <div className="flex items-center gap-4 justify-end">
-                        <div className="px-4 py-2 bg-slate-50 rounded-lg font-bold text-slate-400 w-24 text-center">2000</div>
+                        <div className="px-4 py-2 bg-slate-50 rounded-lg font-bold text-slate-400 w-24 text-center">
+                          {isEditing ? editData.bronzeMax : bronzeMax}
+                        </div>
                         <span className="text-slate-400">น้อยกว่าเท่ากับ</span>
-                        <div className="px-4 py-2 bg-slate-50 rounded-lg font-bold text-slate-400 w-24 text-center">6000</div>
+                        {isEditing ? (
+                          <input 
+                            type="number"
+                            className="px-4 py-2 bg-slate-50 rounded-lg font-bold text-indigo-600 w-24 text-center border-none focus:ring-2 focus:ring-indigo-500"
+                            value={editData.silverMax}
+                            onChange={e => setEditData({...editData, silverMax: Number(e.target.value)})}
+                          />
+                        ) : (
+                          <div className="px-4 py-2 bg-slate-50 rounded-lg font-bold text-slate-400 w-24 text-center">{silverMax}</div>
+                        )}
                         <span className="font-black text-slate-900">THB</span>
                       </div>
                     </td>
@@ -375,7 +492,9 @@ export default function HospitalProfile() {
                     <td className="p-6 text-slate-500">ช่วงการใช้จ่าย <span className="mx-2">มากกว่า</span></td>
                     <td className="p-6">
                       <div className="flex items-center gap-4 justify-end">
-                        <div className="px-4 py-2 bg-slate-50 rounded-lg font-bold text-slate-400 w-32 text-center">6000</div>
+                        <div className="px-4 py-2 bg-slate-50 rounded-lg font-bold text-slate-400 w-32 text-center">
+                          {isEditing ? editData.silverMax : silverMax}
+                        </div>
                         <span className="font-black text-slate-900">THB</span>
                       </div>
                     </td>

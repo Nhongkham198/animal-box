@@ -15,7 +15,8 @@ import {
   Bed,
   CreditCard,
   CheckCircle,
-  AlertTriangle
+  AlertTriangle,
+  Droplets
 } from 'lucide-react';
 import { 
   db, 
@@ -31,7 +32,9 @@ import {
   serverTimestamp,
   setDoc,
   where,
-  getDocs
+  getDocs,
+  getDoc,
+  limit
 } from '../firebase';
 import { useAsyncError } from '../hooks/useAsyncError';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
@@ -82,13 +85,25 @@ export default function PublicBooking() {
   const throwError = useAsyncError();
   const { user, isAuthReady, isStaff } = useAuth();
   const { setQuotaExceeded } = useClinic();
-  const [activeTab, setActiveTab] = useState<'requests' | 'condo'>('condo');
+  const [activeTab, setActiveTab] = useState<'requests' | 'condo' | 'bathing'>('requests');
   const [bookings, setBookings] = useState<BookingRequest[]>([]);
   const [rooms, setRooms] = useState<PetRoom[]>([]);
   const [roomBookings, setRoomBookings] = useState<RoomBooking[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'confirmed' | 'cancelled'>('pending');
   
+  // Internal Bathing State
+  const [internalSearchQuery, setInternalSearchQuery] = useState('');
+  const [internalSearchResults, setInternalSearchResults] = useState<any[]>([]);
+  const [isInternalSearching, setIsInternalSearching] = useState(false);
+  const [isInternalBathingModalOpen, setIsInternalBathingModalOpen] = useState(false);
+  const [selectedInternalPatient, setSelectedInternalPatient] = useState<any>(null);
+  const [internalBathingFormData, setInternalBathingFormData] = useState({
+    date: format(new Date(), 'yyyy-MM-dd'),
+    time: format(new Date(), 'HH:mm'),
+    duration: 30
+  });
+
   // Condo State
   const [selectedRoom, setSelectedRoom] = useState<PetRoom | null>(null);
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
@@ -154,9 +169,151 @@ export default function PublicBooking() {
     await Promise.all(batch);
   };
 
+  const handleInternalSearch = async (val: string) => {
+    setInternalSearchQuery(val);
+    if (val.length < 2) {
+      setInternalSearchResults([]);
+      return;
+    }
+
+    setIsInternalSearching(true);
+    try {
+      const patientQ = query(
+        collection(db, 'patients'),
+        where('name', '>=', val),
+        where('name', '<=', val + '\uf8ff'),
+        limit(5)
+      );
+
+      const ownerQ = query(
+        collection(db, 'owners'),
+        where('name', '>=', val),
+        where('name', '<=', val + '\uf8ff'),
+        limit(5)
+      );
+
+      const [pSnap, oSnap] = await Promise.all([getDocs(patientQ), getDocs(ownerQ)]);
+      
+      const patients = pSnap.docs.map(doc => ({ id: doc.id, type: 'patient' as const, ...doc.data() }));
+      const owners = oSnap.docs.map(doc => ({ id: doc.id, type: 'owner' as const, ...doc.data() }));
+
+      // Fetch owners for patients
+      const ownerIdsForPatients = Array.from(new Set(patients.flatMap((p: any) => p.ownerIds || [])));
+      const ownersMap: Record<string, string> = {};
+      if (ownerIdsForPatients.length > 0) {
+        const ownersForPatientsSnap = await getDocs(query(collection(db, 'owners'), where('__name__', 'in', ownerIdsForPatients.slice(0, 10))));
+        ownersForPatientsSnap.forEach(doc => { ownersMap[doc.id] = doc.data().name; });
+      }
+
+      // Format results
+      const results = [
+        ...patients.map((p: any) => ({
+          ...p,
+          displayTitle: p.name,
+          displaySubtitle: `Patient • ${ownersMap[p.ownerIds?.[0]] || 'No owner'}`
+        })),
+        ...owners.map((o: any) => ({
+          ...o,
+          displayTitle: o.name,
+          displaySubtitle: `Owner • ${o.phone}`
+        }))
+      ];
+
+      setInternalSearchResults(results);
+    } catch (err) {
+      console.error("Internal search error:", err);
+    } finally {
+      setIsInternalSearching(false);
+    }
+  };
+
+  const handleSelectInternalPatient = async (item: any) => {
+    if (item.type === 'owner') {
+      // If owner selected, fetch their first pet
+      if (item.petIds && item.petIds.length > 0) {
+        const petDoc = await getDoc(doc(db, 'patients', item.petIds[0]));
+        if (petDoc.exists()) {
+          setSelectedInternalPatient({ id: petDoc.id, ...petDoc.data(), displayOwnerName: item.name });
+        }
+      } else {
+        alert("This owner has no pets registered.");
+        return;
+      }
+    } else {
+      setSelectedInternalPatient({ ...item, displayOwnerName: item.displaySubtitle.split(' • ')[1] });
+    }
+    
+    setInternalSearchQuery('');
+    setInternalSearchResults([]);
+    setIsInternalBathingModalOpen(true);
+  };
+
+  const handleSaveInternalBathing = async () => {
+    if (!selectedInternalPatient) return;
+    
+    try {
+      setLoading(true);
+      const [y, m, d] = internalBathingFormData.date.split('-').map(Number);
+      const [hh, mm] = internalBathingFormData.time.split(':').map(Number);
+      const startTime = new Date(y, m - 1, d, hh, mm);
+      
+      // 1. Create a "confirmed" public booking record for consistency if needed, 
+      // or just create the appointment directly.
+      // Based on prompt, we want it to show in "Today's Confirmed Queue" (which filters public_bookings)
+      
+      await addDoc(collection(db, 'public_bookings'), {
+        ownerName: selectedInternalPatient.displayOwnerName || 'Walk-in',
+        ownerPhone: selectedInternalPatient.phone || '-',
+        petName: selectedInternalPatient.name,
+        petSpecies: selectedInternalPatient.species || 'Other',
+        requestedDate: internalBathingFormData.date,
+        serviceType: 'bathing',
+        status: 'confirmed',
+        createdAt: serverTimestamp()
+      });
+
+      // 2. Create the clinic appointment
+      await addDoc(collection(db, 'appointments'), {
+        patientName: selectedInternalPatient.name,
+        ownerName: selectedInternalPatient.displayOwnerName || 'Walk-in',
+        activities: `Pet Bathing (อาบน้ำสัตว์เลี้ยง) - ${internalBathingFormData.duration} mins`,
+        startTime: startTime,
+        status: 'confirmed',
+        notes: `Internal Booking - Duration: ${internalBathingFormData.duration} mins`,
+        createdAt: serverTimestamp()
+      });
+
+      setIsInternalBathingModalOpen(false);
+      alert("จองคิวอาบน้ำสำเร็จ!");
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'bathing_booking');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleStatusChange = async (id: string, status: 'confirmed' | 'cancelled') => {
     try {
       await updateDoc(doc(db, 'public_bookings', id), { status });
+      
+      if (status === 'confirmed') {
+        const booking = bookings.find(b => b.id === id);
+        if (booking) {
+          // Sync with clinic appointments
+          const [y, m, d] = booking.requestedDate.split('-').map(Number);
+          const startDate = new Date(y, m - 1, d, 9, 0); // Default to 9 AM
+          
+          await addDoc(collection(db, 'appointments'), {
+            patientName: booking.petName,
+            ownerName: booking.ownerName,
+            activities: booking.serviceType === 'bathing' ? 'Pet Bathing (อาบน้ำสัตว์เลี้ยง)' : booking.serviceType,
+            startTime: startDate,
+            status: 'confirmed',
+            notes: `Public Booking ID: ${id}`,
+            createdAt: serverTimestamp()
+          });
+        }
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `public_bookings/${id}`);
     }
@@ -441,6 +598,25 @@ export default function PublicBooking() {
           <Building2 className="w-4 h-4" />
           Pet Condo
         </motion.button>
+
+        <button
+          onClick={() => setActiveTab('bathing')}
+          className={cn(
+            "px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2",
+            activeTab === 'bathing' ? "bg-sky-500 text-white shadow-lg shadow-sky-100" : "text-slate-400 hover:text-slate-600"
+          )}
+        >
+          <div className="relative">
+            <span className="flex items-center justify-center">🛁</span>
+          </div>
+          Bathing Room
+          {bookings.filter(b => b.status === 'pending' && b.serviceType === 'bathing').length > 0 && (
+            <span className="bg-sky-100 text-sky-600 text-[8px] px-1.5 py-0.5 rounded-full font-black">
+              {bookings.filter(b => b.status === 'pending' && b.serviceType === 'bathing').length}
+            </span>
+          )}
+        </button>
+
         <button
           onClick={() => setActiveTab('requests')}
           className={cn(
@@ -450,16 +626,163 @@ export default function PublicBooking() {
         >
           <MessageSquare className="w-4 h-4" />
           General Requests
-          {bookings.filter(b => b.status === 'pending').length > 0 && (
+          {bookings.filter(b => b.status === 'pending' && b.serviceType !== 'bathing').length > 0 && (
             <span className="bg-rose-500 text-white text-[8px] px-1.5 py-0.5 rounded-full">
-              {bookings.filter(b => b.status === 'pending').length}
+              {bookings.filter(b => b.status === 'pending' && b.serviceType !== 'bathing').length}
             </span>
           )}
         </button>
       </div>
 
       <AnimatePresence mode="wait">
-        {activeTab === 'requests' ? (
+        {activeTab === 'bathing' ? (
+          <motion.div
+            key="bathing"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="space-y-8"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-3xl font-black text-slate-900 uppercase tracking-tighter italic">PET BATHING ROOM</h1>
+                <p className="text-sm text-slate-400 font-medium tracking-wide">จัดการคิวอาบน้ำและห้องสปาประจำวัน</p>
+              </div>
+
+              {/* Internal Search Bar */}
+              <div className="relative w-80">
+                <div className="flex items-center bg-white rounded-2xl px-4 py-3 gap-2 border border-slate-200 shadow-sm focus-within:border-sky-400 focus-within:ring-4 focus-within:ring-sky-50 transition-all">
+                  <Search className="w-5 h-5 text-slate-400" />
+                  <input 
+                    type="text" 
+                    placeholder="ค้นหาชื่อสัตว์เลี้ยง หรือ เจ้าของ..." 
+                    value={internalSearchQuery}
+                    onChange={(e) => handleInternalSearch(e.target.value)}
+                    className="bg-transparent border-none focus:ring-0 text-sm w-full outline-none font-bold"
+                  />
+                  {isInternalSearching && (
+                    <div className="w-4 h-4 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" />
+                  )}
+                </div>
+
+                <AnimatePresence>
+                  {internalSearchResults.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 10 }}
+                      className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden z-[60]"
+                    >
+                      {internalSearchResults.map((item) => (
+                        <button
+                          key={item.id}
+                          onClick={() => handleSelectInternalPatient(item)}
+                          className="w-full p-4 text-left hover:bg-slate-50 flex items-center gap-4 transition-colors border-b border-slate-50 last:border-0 group"
+                        >
+                          <div className={cn(
+                            "w-10 h-10 rounded-xl flex items-center justify-center text-white",
+                            item.type === 'patient' ? "bg-rose-400" : "bg-indigo-400"
+                          )}>
+                            {item.type === 'patient' ? <PawPrint className="w-5 h-5" /> : <User className="w-5 h-5" />}
+                          </div>
+                          <div>
+                            <p className="font-black text-slate-800">{item.displayTitle}</p>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.displaySubtitle}</p>
+                          </div>
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <div className="flex gap-4">
+                <div className="px-6 py-4 bg-sky-50 rounded-[2rem] border border-sky-100 flex items-center gap-4 shadow-sm">
+                  <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-sky-500 shadow-inner">
+                    <Clock className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black text-sky-400 uppercase tracking-widest">Today's Queue</p>
+                    <p className="text-xl font-black text-sky-600">
+                      {bookings.filter(b => b.serviceType === 'bathing' && b.requestedDate === format(new Date(), 'yyyy-MM-dd') && b.status === 'confirmed').length} ตัว
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* Confirmed Appointments list for today */}
+              <div className="bg-white rounded-[3rem] border border-slate-100 p-8 shadow-sm space-y-6">
+                <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Today's Confirmed Queue</h3>
+                <div className="space-y-4">
+                  {bookings.filter(b => b.serviceType === 'bathing' && b.requestedDate === format(new Date(), 'yyyy-MM-dd') && b.status === 'confirmed').length > 0 ? (
+                    bookings.filter(b => b.serviceType === 'bathing' && b.requestedDate === format(new Date(), 'yyyy-MM-dd') && b.status === 'confirmed').map(b => (
+                      <div key={b.id} className="flex items-center gap-4 p-4 bg-slate-50 rounded-[2rem] border border-transparent hover:border-sky-200 transition-all hover:bg-sky-50/50 group">
+                        <div className="w-12 h-12 rounded-2xl bg-white shadow-sm flex items-center justify-center text-sky-500 font-black">
+                          {b.petName.charAt(0)}
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-black text-slate-700">{b.petName}</p>
+                          <p className="text-[10px] font-bold text-slate-400">{b.ownerName} • {b.ownerPhone}</p>
+                        </div>
+                        <div className="text-right">
+                          <span className="px-3 py-1 bg-sky-100 text-sky-600 rounded-full text-[10px] font-black uppercase tracking-widest">Confirmed</span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="py-12 text-center opacity-30">
+                      <p className="text-slate-400 font-bold">No confirmed bathing for today</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Pending Requests specifically for bathing */}
+              <div className="bg-white rounded-[3rem] border border-slate-100 p-8 shadow-sm space-y-6">
+                <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Pending Bathing Requests</h3>
+                <div className="space-y-4">
+                  {bookings.filter(b => b.serviceType === 'bathing' && b.status === 'pending').length > 0 ? (
+                    bookings.filter(b => b.serviceType === 'bathing' && b.status === 'pending').map(b => (
+                      <div key={b.id} className="p-6 bg-white border border-slate-100 rounded-[2.5rem] shadow-sm hover:shadow-md transition-all space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center text-orange-400">
+                              <Clock className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <p className="font-black text-slate-700">{b.petName}</p>
+                              <p className="text-[10px] font-bold text-slate-400">{b.requestedDate}</p>
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => handleStatusChange(b.id, 'confirmed')}
+                              className="p-2 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 transition-colors"
+                            >
+                              <CheckCircle2 className="w-4 h-4" />
+                            </button>
+                            <button 
+                              onClick={() => handleStatusChange(b.id, 'cancelled')}
+                              className="p-2 bg-slate-100 text-slate-400 rounded-xl hover:bg-slate-200 transition-colors"
+                            >
+                              <XCircle className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="py-12 text-center opacity-30">
+                      <p className="text-slate-400 font-bold">No pending bathing requests</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        ) : activeTab === 'requests' ? (
           <motion.div
             key="requests"
             initial={{ opacity: 0, x: 20 }}
@@ -774,8 +1097,115 @@ export default function PublicBooking() {
         )}
       </AnimatePresence>
 
+      {/* Internal Bathing Booking Modal */}
+      <AnimatePresence>
+        {isInternalBathingModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsInternalBathingModalOpen(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative bg-white w-full max-w-md rounded-[3rem] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8 pb-4 flex items-center justify-between border-b border-slate-100">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-sky-50 rounded-2xl flex items-center justify-center text-sky-500 shadow-inner">
+                    <Droplets className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight italic">Internal Booking</h3>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">นัดหมายอาบน้ำสัตว์เลี้ยง</p>
+                  </div>
+                </div>
+                <button onClick={() => setIsInternalBathingModalOpen(false)} className="p-2 hover:bg-slate-50 rounded-xl transition-colors">
+                  <XCircle className="w-6 h-6 text-slate-300" />
+                </button>
+              </div>
+
+              <div className="p-8 space-y-6">
+                {/* Pet Summary */}
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center gap-4">
+                  <div className="w-12 h-12 bg-white rounded-xl shadow-sm flex items-center justify-center text-sky-500 font-black">
+                    {selectedInternalPatient?.name?.charAt(0)}
+                  </div>
+                  <div>
+                    <p className="font-black text-slate-800">{selectedInternalPatient?.name}</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                      {selectedInternalPatient?.species} • Owner: {selectedInternalPatient?.displayOwnerName || 'Walk-in'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Select Date</label>
+                    <div className="relative">
+                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input 
+                        type="date" 
+                        value={internalBathingFormData.date}
+                        onChange={(e) => setInternalBathingFormData(prev => ({ ...prev, date: e.target.value }))}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-3 text-sm font-bold focus:outline-none focus:ring-4 focus:ring-sky-50 focus:border-sky-400 transition-all shadow-inner"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Select Time</label>
+                    <div className="relative">
+                      <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input 
+                        type="time" 
+                        value={internalBathingFormData.time}
+                        onChange={(e) => setInternalBathingFormData(prev => ({ ...prev, time: e.target.value }))}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-3 text-sm font-bold focus:outline-none focus:ring-4 focus:ring-sky-50 focus:border-sky-400 transition-all shadow-inner"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Duration (Minutes)</label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {[30, 45, 60, 90].map(m => (
+                      <button
+                        key={m}
+                        onClick={() => setInternalBathingFormData(prev => ({ ...prev, duration: m }))}
+                        className={cn(
+                          "py-3 rounded-xl text-sm font-black transition-all border",
+                          internalBathingFormData.duration === m 
+                            ? "bg-sky-500 text-white border-sky-500 shadow-lg shadow-sky-100 scale-105" 
+                            : "bg-slate-50 text-slate-400 border-slate-200 hover:border-sky-200"
+                        )}
+                      >
+                        {m}m
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleSaveInternalBathing}
+                  disabled={loading}
+                  className="w-full py-4 bg-sky-500 text-white rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-sky-100 hover:bg-sky-600 transition-all disabled:opacity-50 flex items-center justify-center gap-2 mt-4"
+                >
+                  <CheckCircle2 className="w-5 h-5" />
+                  Confirm Booking
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Shareable Link Card */}
-      <div className="bg-[#00b4d8] p-8 rounded-3xl shadow-xl shadow-cyan-100 text-white flex items-center justify-between">
+      <div className="bg-[#00b4d8] p-8 rounded-3xl shadow-xl shadow-cyan-100 text-white flex items-center justify-between mt-8">
         <div className="space-y-2">
           <h3 className="text-xl font-black uppercase tracking-tight">Booking Link</h3>
           <p className="text-white/70 text-sm font-medium">Share this link on Facebook or Line to receive appointment requests.</p>

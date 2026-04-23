@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Plus, 
   Search, 
@@ -63,6 +63,8 @@ interface Patient {
   medicalHistory?: { id?: string; date: any; diagnosis: string; treatment: string }[];
   vaccineRecords?: { id?: string; name: string; date: any; nextDate: any }[];
   nextVaccineDate?: any;
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 interface Owner {
@@ -149,6 +151,15 @@ export default function Patients() {
   const cancelImportRef = useRef(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0, percentage: 0 });
+
+  const speciesStats = useMemo(() => {
+    const stats: Record<string, number> = {};
+    patients.forEach(p => {
+      const s = p.species || 'Unknown';
+      stats[s] = (stats[s] || 0) + 1;
+    });
+    return Object.entries(stats).sort((a, b) => b[1] - a[1]);
+  }, [patients]);
 
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -707,12 +718,34 @@ export default function Patients() {
       {/* Overview Card */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8">
         <div className="space-y-6">
-          <h2 className="text-lg font-black text-slate-800">Overview</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-black text-slate-800">Overview</h2>
+            <div className="flex flex-wrap gap-2 justify-end max-w-[60%]">
+              {speciesStats.slice(0, 6).map(([species, count]) => (
+                <div key={species} className="flex items-center gap-2 px-3 py-1 bg-slate-50 border border-slate-100 rounded-lg shadow-sm">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{species}</span>
+                  <span className="text-xs font-black text-[#00b4d8]">{count}</span>
+                </div>
+              ))}
+              {speciesStats.length > 6 && (
+                <div className="px-3 py-1 bg-slate-50 border border-slate-100 rounded-lg">
+                  <span className="text-[10px] font-bold text-slate-400">+{speciesStats.length - 6} more</span>
+                </div>
+              )}
+            </div>
+          </div>
           <div className="grid grid-cols-5 divide-x divide-slate-100">
             <div className="px-6 first:pl-0">
               <p className="text-xs font-bold text-slate-400">New Pet</p>
               <p className="text-[10px] text-slate-300 italic mb-1">This month</p>
-              <p className="text-3xl font-black text-[#00b4d8]">0</p>
+              <p className="text-3xl font-black text-[#00b4d8]">
+                {patients.filter(p => {
+                  if (!p.createdAt) return false;
+                  const date = p.createdAt.toDate ? p.createdAt.toDate() : new Date(p.createdAt);
+                  const now = new Date();
+                  return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+                }).length}
+              </p>
             </div>
             <div className="px-6">
               <p className="text-xs font-bold text-slate-400 mb-4">Total Pet</p>

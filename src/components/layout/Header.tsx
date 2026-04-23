@@ -75,8 +75,32 @@ export default function Header({ activeView, setActiveView }: HeaderProps) {
         getDocs(inventoryQ)
       ]);
 
+      const patients = patientSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
+      
+      // Fetch owners for each patient
+      const ownerIds = Array.from(new Set(patients.flatMap(p => p.ownerIds || [])));
+      const ownersMap: Record<string, string> = {};
+      
+      if (ownerIds.length > 0) {
+        try {
+          // Fetch owners in a single query
+          const ownersSnap = await getDocs(query(
+            collection(db, 'owners'),
+            where('__name__', 'in', ownerIds.slice(0, 10))
+          ));
+          ownersSnap.forEach(doc => {
+            ownersMap[doc.id] = doc.data().name;
+          });
+        } catch (ownerErr) {
+          console.error("Error fetching owners for search:", ownerErr);
+        }
+      }
+
       setGlobalSearchResults({
-        patients: patientSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+        patients: patients.map(p => ({
+          ...p,
+          displayOwnerName: p.ownerIds && p.ownerIds.length > 0 ? ownersMap[p.ownerIds[0]] : 'No owner'
+        })),
         inventory: inventorySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
       });
     } catch (err) {
@@ -221,7 +245,9 @@ export default function Header({ activeView, setActiveView }: HeaderProps) {
                           </div>
                           <div>
                             <p className="text-sm font-bold text-slate-800">{p.name}</p>
-                            <p className="text-[10px] text-slate-400 font-bold uppercase">HN: {p.hn} • {p.ownerName}</p>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase truncate max-w-[200px]">
+                              HN: {p.hn} • {p.displayOwnerName || 'No owner'}
+                            </p>
                           </div>
                         </button>
                       ))}

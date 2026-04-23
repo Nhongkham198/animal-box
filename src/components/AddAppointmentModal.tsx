@@ -26,7 +26,8 @@ import {
   Syringe,
   Stethoscope,
   Scissors,
-  ChevronRight
+  ChevronRight,
+  Droplets
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, addHours, startOfToday } from 'date-fns';
@@ -41,6 +42,7 @@ const SERVICES = [
   { id: 'vaccine', name: 'Vaccine (วัคซีน)', icon: Syringe, color: 'text-emerald-500', bg: 'bg-emerald-50' },
   { id: 'checkup', name: 'Check-up (ตรวจ)', icon: Stethoscope, color: 'text-blue-500', bg: 'bg-blue-50' },
   { id: 'surgery', name: 'Surgery (ผ่าตัด)', icon: Scissors, color: 'text-amber-500', bg: 'bg-amber-50' },
+  { id: 'bathing', name: 'Bathing (อาบน้ำ)', icon: Droplets, color: 'text-sky-500', bg: 'bg-sky-50' },
 ];
 
 export default function AddAppointmentModal({ isOpen, onClose }: AddAppointmentModalProps) {
