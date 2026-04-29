@@ -518,6 +518,7 @@ export default function AddPatientModal({ isOpen, onClose, editPatientId }: AddP
         birthDate: finalBirthDate ? finalBirthDate.toISOString() : null,
         photoURL: formData.photoURL,
         ownerIds,
+        ownerName: owners[0]?.name || '',
         medicalHistory: medicalHistory.map(h => ({ ...h, date: new Date(h.date) })),
         vaccineRecords: vaccineRecords.map(v => ({ 
           ...v, 

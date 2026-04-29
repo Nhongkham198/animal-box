@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import { db, doc, onSnapshot, setDoc, serverTimestamp } from '../firebase';
 
 interface ClinicContextType {
   clinicName: string;
@@ -33,6 +34,8 @@ interface ClinicContextType {
   setClinicMapQuery: (query: string) => void;
   quotaExceeded: boolean;
   setQuotaExceeded: (exceeded: boolean) => void;
+  saveClinicSettings: (data: Partial<ClinicContextType>) => Promise<void>;
+  loading: boolean;
 }
 
 const ClinicContext = createContext<ClinicContextType | undefined>(undefined);
@@ -54,6 +57,45 @@ export function ClinicProvider({ children }: { children: ReactNode }) {
   const [bronzeMax, setBronzeMax] = useState(2000);
   const [silverMax, setSilverMax] = useState(6000);
   const [quotaExceeded, setQuotaExceeded] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'clinic_profile'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.clinicName) setClinicName(data.clinicName);
+        if (data.clinicAddress) setClinicAddress(data.clinicAddress);
+        if (data.clinicPhone) setClinicPhone(data.clinicPhone);
+        if (data.clinicSupportEmail) setClinicSupportEmail(data.clinicSupportEmail);
+        if (data.clinicHours) setClinicHours(data.clinicHours);
+        if (data.hospitalId) setHospitalId(data.hospitalId);
+        if (data.website) setWebsite(data.website);
+        if (data.lineId) setLineId(data.lineId);
+        if (data.facebook) setFacebook(data.facebook);
+        if (data.instagram) setInstagram(data.instagram);
+        if (data.prefixUsername) setPrefixUsername(data.prefixUsername);
+        if (data.noTagMax !== undefined) setNoTagMax(data.noTagMax);
+        if (data.bronzeMax !== undefined) setBronzeMax(data.bronzeMax);
+        if (data.silverMax !== undefined) setSilverMax(data.silverMax);
+        if (data.clinicMapQuery) setClinicMapQuery(data.clinicMapQuery);
+      }
+      setLoading(false);
+    });
+
+    return () => unsub();
+  }, []);
+
+  const saveClinicSettings = async (data: any) => {
+    try {
+      await setDoc(doc(db, 'settings', 'clinic_profile'), {
+        ...data,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    } catch (err) {
+      console.error("Error saving clinic settings:", err);
+      throw err;
+    }
+  };
 
   const value = {
     clinicName,
@@ -88,6 +130,8 @@ export function ClinicProvider({ children }: { children: ReactNode }) {
     setClinicMapQuery,
     quotaExceeded,
     setQuotaExceeded,
+    saveClinicSettings,
+    loading
   };
 
   return <ClinicContext.Provider value={value}>{children}</ClinicContext.Provider>;

@@ -24,26 +24,29 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
 export default function HospitalProfile() {
   const { 
-    clinicName, setClinicName, 
-    clinicAddress, setClinicAddress, 
-    clinicPhone, setClinicPhone,
-    clinicSupportEmail, setClinicSupportEmail,
-    clinicHours, setClinicHours,
-    hospitalId, setHospitalId,
-    website, setWebsite,
-    lineId, setLineId,
-    facebook, setFacebook,
-    instagram, setInstagram,
-    prefixUsername, setPrefixUsername,
-    noTagMax, setNoTagMax,
-    bronzeMax, setBronzeMax,
-    silverMax, setSilverMax,
-    clinicMapQuery, setClinicMapQuery
+    clinicName,
+    clinicAddress,
+    clinicPhone,
+    clinicSupportEmail,
+    clinicHours,
+    hospitalId,
+    website,
+    lineId,
+    facebook,
+    instagram,
+    prefixUsername,
+    noTagMax,
+    bronzeMax,
+    silverMax,
+    clinicMapQuery,
+    saveClinicSettings,
+    loading: isClinicLoading
   } = useClinic();
   const { user, isAdmin } = useAuth();
-  const [isEditing, setIsEditing] = useState(false);
-  const [isFindingAddress, setIsFindingAddress] = useState(false);
-  const [editData, setEditData] = useState({
+  const [isEditing, setIsEditing] = React.useState(false);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const [isFindingAddress, setIsFindingAddress] = React.useState(false);
+  const [editData, setEditData] = React.useState({
     name: clinicName,
     address: clinicAddress,
     phone: clinicPhone,
@@ -54,12 +57,37 @@ export default function HospitalProfile() {
     lineId: lineId,
     facebook: facebook,
     instagram: instagram,
-    prefix: prefixUsername,
     noTagMax: noTagMax,
     bronzeMax: bronzeMax,
     silverMax: silverMax,
     mapQuery: clinicMapQuery
   });
+
+  // Sync editData with context when not editing
+  React.useEffect(() => {
+    if (!isEditing) {
+      setEditData({
+        name: clinicName,
+        address: clinicAddress,
+        phone: clinicPhone,
+        supportEmail: clinicSupportEmail,
+        hours: clinicHours,
+        id: hospitalId,
+        website: website,
+        lineId: lineId,
+        facebook: facebook,
+        instagram: instagram,
+        noTagMax: noTagMax,
+        bronzeMax: bronzeMax,
+        silverMax: silverMax,
+        mapQuery: clinicMapQuery
+      });
+    }
+  }, [
+    isEditing, clinicName, clinicAddress, clinicPhone, clinicSupportEmail, 
+    clinicHours, hospitalId, website, lineId, facebook, instagram, 
+    noTagMax, bronzeMax, silverMax, clinicMapQuery
+  ]);
 
   const handleSmartSyncAddress = async () => {
     const query = editData.mapQuery || `${editData.name}`;
@@ -92,27 +120,44 @@ export default function HospitalProfile() {
     }
   };
 
-  const handleSave = () => {
-    setClinicName(editData.name);
-    setClinicAddress(editData.address);
-    setClinicPhone(editData.phone);
-    setClinicSupportEmail(editData.supportEmail);
-    setClinicHours(editData.hours);
-    setHospitalId(editData.id);
-    setWebsite(editData.website);
-    setLineId(editData.lineId);
-    setFacebook(editData.facebook);
-    setInstagram(editData.instagram);
-    setPrefixUsername(editData.prefix);
-    setNoTagMax(Number(editData.noTagMax));
-    setBronzeMax(Number(editData.bronzeMax));
-    setSilverMax(Number(editData.silverMax));
-    setClinicMapQuery(editData.mapQuery);
-    setIsEditing(false);
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      await saveClinicSettings({
+        clinicName: editData.name,
+        clinicAddress: editData.address,
+        clinicPhone: editData.phone,
+        clinicSupportEmail: editData.supportEmail,
+        clinicHours: editData.hours,
+        hospitalId: editData.id,
+        website: editData.website,
+        lineId: editData.lineId,
+        facebook: editData.facebook,
+        instagram: editData.instagram,
+        noTagMax: Number(editData.noTagMax),
+        bronzeMax: Number(editData.bronzeMax),
+        silverMax: Number(editData.silverMax),
+        clinicMapQuery: editData.mapQuery
+      });
+      setIsEditing(false);
+    } catch (err) {
+      console.error("Save Error:", err);
+      alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Construct the search query for Google Maps
   const effectiveMapQuery = clinicMapQuery || `${clinicName} ${clinicAddress}`;
+
+  if (isClinicLoading) {
+    return (
+      <div className="flex items-center justify-center p-20">
+        <Loader2 className="w-8 h-8 text-[#00b4d8] animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -122,14 +167,18 @@ export default function HospitalProfile() {
         {isAdmin && (
           <button 
             onClick={() => isEditing ? handleSave() : setIsEditing(true)}
+            disabled={isSaving}
             className={cn(
               "flex items-center gap-2 px-6 py-2 rounded-lg font-bold transition-all shadow-lg",
               isEditing 
                 ? "bg-emerald-500 text-white hover:bg-emerald-600 shadow-emerald-100" 
-                : "bg-[#00b4d8] text-white hover:bg-[#0096b1] shadow-cyan-100"
+                : "bg-[#00b4d8] text-white hover:bg-[#0096b1] shadow-cyan-100",
+              isSaving && "opacity-70 cursor-not-allowed"
             )}
           >
-            {isEditing ? (
+            {isSaving ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</>
+            ) : isEditing ? (
               <><Save className="w-4 h-4" /> Save Changes</>
             ) : (
               <><Edit2 className="w-4 h-4" /> Edit Profile</>
@@ -239,23 +288,6 @@ export default function HospitalProfile() {
                 </div>
               </div>
             </div>
-          </div>
-
-          {/* Prefix Card */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8">
-            <h3 className="text-sm font-black text-slate-900 mb-4 uppercase tracking-wider">Prefix username</h3>
-            {isEditing ? (
-              <input 
-                className="text-2xl font-bold text-slate-700 mb-2 w-full border-b border-indigo-500 focus:outline-none"
-                value={editData.prefix}
-                onChange={e => setEditData({...editData, prefix: e.target.value})}
-              />
-            ) : (
-              <p className="text-2xl font-bold text-slate-700 mb-2">{prefixUsername}</p>
-            )}
-            <p className="text-[10px] text-slate-400 leading-relaxed">
-              ตั้งค่าคำนำหน้า Username Staff ที่ใช้งานโรงพยาบาลนี้ คำนำหน้าจะไม่ซ้ำกันในระบบ VRemind
-            </p>
           </div>
         </div>
 

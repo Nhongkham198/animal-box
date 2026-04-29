@@ -67,7 +67,6 @@ export default function Sidebar({
       icon: Stethoscope,
       subItems: [
         { id: 'opd', label: 'OPD List' },
-        { id: 'add-opd', label: 'Add OPD' },
       ]
     },
     { 
@@ -76,7 +75,6 @@ export default function Sidebar({
       icon: Stethoscope,
       subItems: [
         { id: 'ipd', label: 'IPD List' },
-        { id: 'add-ipd', label: 'Admit Pet' },
       ]
     },
     { id: 'finance', label: 'Finance', icon: CreditCard },

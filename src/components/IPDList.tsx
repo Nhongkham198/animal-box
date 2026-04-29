@@ -12,6 +12,7 @@ import {
   serverTimestamp,
   updateDoc,
   doc,
+  getDoc,
   getDocs,
   limit
 } from '../firebase';
@@ -34,7 +35,10 @@ import {
   Phone,
   Calendar as CalendarIcon,
   ArrowRight,
-  LogOut
+  LogOut,
+  Bed,
+  Pill,
+  ShieldCheck
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
@@ -53,6 +57,10 @@ interface IPDRecord {
   treatmentPlan: string;
   dailyNotes?: { date: any; note: string; vet: string }[];
   billingStatus?: 'unpaid' | 'paid' | 'none';
+  isBoarding?: boolean;
+  boardingDetails?: string;
+  isMedication?: boolean;
+  medicationDetails?: string;
 }
 
 export default function IPDList() {
@@ -74,7 +82,11 @@ export default function IPDList() {
     cageNumber: '',
     diagnosis: '',
     treatmentPlan: '',
-    status: 'Admitted' as const
+    status: 'Admitted' as const,
+    isBoarding: false,
+    boardingDetails: '',
+    isMedication: false,
+    medicationDetails: ''
   });
 
   useEffect(() => {
@@ -127,7 +139,24 @@ export default function IPDList() {
         limit(5)
       );
       const snap = await getDocs(q);
-      setSearchResults(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      const results = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      
+      // Fetch missing owner names
+      const enhancedResults = await Promise.all(results.map(async (p) => {
+        if (!p.ownerName && p.ownerIds && p.ownerIds.length > 0) {
+          try {
+            const ownerDoc = await getDoc(doc(db, 'owners', p.ownerIds[0]));
+            if (ownerDoc.exists()) {
+              return { ...p, ownerName: ownerDoc.data().name };
+            }
+          } catch (e) {
+            console.warn("Owner fetch error during search:", e);
+          }
+        }
+        return p;
+      }));
+
+      setSearchResults(enhancedResults);
     } catch (err) {
       console.warn("Search warning (check permissions):", err);
     } finally {
@@ -182,8 +211,13 @@ export default function IPDList() {
         cageNumber: '',
         diagnosis: '',
         treatmentPlan: '',
-        status: 'Admitted'
+        status: 'Admitted',
+        isBoarding: false,
+        boardingDetails: '',
+        isMedication: false,
+        medicationDetails: ''
       });
+      setPatientSearch('');
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'ipd_records');
     }
@@ -320,7 +354,21 @@ export default function IPDList() {
                       {record.cageNumber}
                     </div>
                     <div>
-                      <p className="font-black text-slate-800">{record.petName}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-black text-slate-800">{record.petName}</p>
+                        <div className="flex gap-1">
+                          {record.isBoarding && (
+                            <div className="w-5 h-5 bg-sky-50 text-sky-500 rounded-lg flex items-center justify-center" title="Boarding">
+                              <Bed className="w-3 h-3" />
+                            </div>
+                          )}
+                          {record.isMedication && (
+                            <div className="w-5 h-5 bg-amber-50 text-amber-500 rounded-lg flex items-center justify-center" title="Medication">
+                              <Pill className="w-3 h-3" />
+                            </div>
+                          )}
+                        </div>
+                      </div>
                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
                         <User className="w-3 h-3" /> {record.ownerName}
                       </p>
@@ -421,92 +469,216 @@ export default function IPDList() {
                 </button>
               </div>
 
-              <form onSubmit={handleAddRecord} className="p-8 space-y-6">
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="space-y-2 relative">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Select Patient</label>
-                    <div className="relative">
-                      <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                      <input
-                        type="text"
-                        placeholder="Search pet name..."
-                        value={patientSearch}
-                        onChange={(e) => handleSearchPatient(e.target.value)}
-                        className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-transparent focus:border-rose-500 focus:bg-white rounded-2xl transition-all outline-none font-bold text-slate-700"
-                      />
-                      {isSearching && (
-                        <div className="absolute right-4 top-1/2 -translate-y-1/2">
-                          <div className="w-4 h-4 border-2 border-rose-600 border-t-transparent rounded-full animate-spin" />
+              <form onSubmit={handleAddRecord} className="p-8 space-y-8 max-h-[70vh] overflow-y-auto custom-scrollbar bg-slate-50/20">
+                {/* 1. Basic Information */}
+                <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm space-y-6">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-1.5 h-4 bg-rose-500 rounded-full" />
+                    <h3 className="text-[10px] font-black text-slate-800 uppercase tracking-[0.2em]">Basic Information</h3>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-2 relative">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Select Patient</label>
+                      <div className="relative">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="Search pet name..."
+                          value={patientSearch}
+                          onChange={(e) => handleSearchPatient(e.target.value)}
+                          className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-transparent focus:border-rose-500 focus:bg-white rounded-2xl transition-all outline-none font-bold text-slate-700"
+                        />
+                        {isSearching && (
+                          <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                            <div className="w-4 h-4 border-2 border-rose-600 border-t-transparent rounded-full animate-spin" />
+                          </div>
+                        )}
+                      </div>
+
+                      {searchResults.length > 0 && (
+                        <div className="absolute z-50 w-full mt-2 bg-white rounded-2xl border border-slate-100 shadow-xl overflow-hidden max-h-[200px] overflow-y-auto">
+                          {searchResults.map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => selectPatient(p)}
+                              className="w-full p-4 text-left hover:bg-slate-50 flex items-center justify-between transition-colors border-b border-slate-50 last:border-0"
+                            >
+                              <div>
+                                <p className="font-black text-slate-800">{p.name}</p>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5 mt-0.5">
+                                  <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 font-mono">HN: {p.hn || '-'}</span>
+                                  {(p.ownerName || p.owner || p.ownerDisplayName) && (
+                                    <>
+                                      <span className="text-slate-300">|</span>
+                                      <span className="text-rose-500">เจ้าของ: {p.ownerName || p.owner || p.ownerDisplayName}</span>
+                                    </>
+                                  )}
+                                </p>
+                              </div>
+                              <ArrowRight className="w-4 h-4 text-slate-300" />
+                            </button>
+                          ))}
                         </div>
                       )}
                     </div>
-
-                    {searchResults.length > 0 && (
-                      <div className="absolute z-10 w-full mt-2 bg-white rounded-2xl border border-slate-100 shadow-xl overflow-hidden max-h-[200px] overflow-y-auto">
-                        {searchResults.map((p) => (
-                          <button
-                            key={p.id}
-                            type="button"
-                            onClick={() => selectPatient(p)}
-                            className="w-full p-4 text-left hover:bg-slate-50 flex items-center justify-between transition-colors border-b border-slate-50 last:border-0"
-                          >
-                            <div>
-                              <p className="font-black text-slate-800">{p.name}</p>
-                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">HN: {p.hn || '-'} • {p.ownerName}</p>
-                            </div>
-                            <ArrowRight className="w-4 h-4 text-slate-300" />
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Cage Number</label>
+                      <input
+                        required
+                        type="text"
+                        placeholder="e.g. A-01"
+                        value={newRecord.cageNumber}
+                        onChange={(e) => setNewRecord({...newRecord, cageNumber: e.target.value})}
+                        className="w-full px-5 py-4 bg-slate-50 border-2 border-transparent focus:border-rose-500 focus:bg-white rounded-2xl transition-all outline-none font-bold text-slate-700"
+                      />
+                    </div>
                   </div>
+
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Cage Number</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Owner Name</label>
                     <input
                       required
                       type="text"
-                      placeholder="e.g. A-01"
-                      value={newRecord.cageNumber}
-                      onChange={(e) => setNewRecord({...newRecord, cageNumber: e.target.value})}
+                      value={newRecord.ownerName}
+                      onChange={(e) => setNewRecord({...newRecord, ownerName: e.target.value})}
                       className="w-full px-5 py-4 bg-slate-50 border-2 border-transparent focus:border-rose-500 focus:bg-white rounded-2xl transition-all outline-none font-bold text-slate-700"
                     />
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Owner Name</label>
-                  <input
-                    required
-                    type="text"
-                    value={newRecord.ownerName}
-                    onChange={(e) => setNewRecord({...newRecord, ownerName: e.target.value})}
-                    className="w-full px-5 py-4 bg-slate-50 border-2 border-transparent focus:border-rose-500 focus:bg-white rounded-2xl transition-all outline-none font-bold text-slate-700"
-                  />
+                {/* 2. Medical Details */}
+                <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm space-y-6">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-1.5 h-4 bg-amber-500 rounded-full" />
+                    <h3 className="text-[10px] font-black text-slate-800 uppercase tracking-[0.2em]">Medical Assessment</h3>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Diagnosis</label>
+                    <textarea
+                      required
+                      rows={2}
+                      value={newRecord.diagnosis}
+                      onChange={(e) => setNewRecord({...newRecord, diagnosis: e.target.value})}
+                      className="w-full px-5 py-4 bg-slate-50 border-2 border-transparent focus:border-rose-500 focus:bg-white rounded-2xl transition-all outline-none font-bold text-slate-700 resize-none placeholder:text-slate-300"
+                      placeholder="อาการเบื้องต้น หรือข้อวินิจฉัย..."
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Treatment Plan</label>
+                    <textarea
+                      required
+                      rows={3}
+                      value={newRecord.treatmentPlan}
+                      onChange={(e) => setNewRecord({...newRecord, treatmentPlan: e.target.value})}
+                      className="w-full px-5 py-4 bg-slate-50 border-2 border-transparent focus:border-rose-500 focus:bg-white rounded-2xl transition-all outline-none font-bold text-slate-700 resize-none placeholder:text-slate-300"
+                      placeholder="แผนการรักษาที่โรงพยาบาล..."
+                    />
+                  </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Diagnosis</label>
-                  <textarea
-                    required
-                    rows={2}
-                    value={newRecord.diagnosis}
-                    onChange={(e) => setNewRecord({...newRecord, diagnosis: e.target.value})}
-                    className="w-full px-5 py-4 bg-slate-50 border-2 border-transparent focus:border-rose-500 focus:bg-white rounded-2xl transition-all outline-none font-bold text-slate-700 resize-none"
-                  />
+                {/* 3. Additional Services */}
+                <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm space-y-6">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-1.5 h-4 bg-emerald-500 rounded-full" />
+                    <h3 className="text-[10px] font-black text-slate-800 uppercase tracking-[0.2em]">Additional Services</h3>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Boarding Section */}
+                    <div className={cn(
+                      "p-5 rounded-3xl border-2 transition-all duration-300 relative overflow-hidden group cursor-pointer",
+                      newRecord.isBoarding ? "border-sky-500 bg-sky-50/50 shadow-xl shadow-sky-100/50" : "border-slate-100 bg-white hover:border-slate-200"
+                    )} onClick={() => setNewRecord({...newRecord, isBoarding: !newRecord.isBoarding})}>
+                      <div className="flex items-center justify-between mb-4">
+                        <div className={cn(
+                          "w-10 h-10 rounded-2xl flex items-center justify-center transition-colors",
+                          newRecord.isBoarding ? "bg-sky-500 text-white" : "bg-slate-50 text-slate-400"
+                        )}>
+                          <Bed className="w-5 h-5" />
+                        </div>
+                        <div className={cn(
+                          "w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all",
+                          newRecord.isBoarding ? "border-sky-500 bg-sky-500 scale-110" : "border-slate-200"
+                        )}>
+                          {newRecord.isBoarding && <ShieldCheck className="w-3 h-3 text-white" />}
+                        </div>
+                      </div>
+                      <h5 className={cn("text-xs font-black uppercase tracking-widest", newRecord.isBoarding ? "text-sky-700" : "text-slate-400")}>
+                        ฝากสัตว์เลี้ยง
+                      </h5>
+                      <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Pet Hotel / Boarding</p>
+                    </div>
+
+                    {/* Medication Section */}
+                    <div className={cn(
+                      "p-5 rounded-3xl border-2 transition-all duration-300 relative overflow-hidden group cursor-pointer",
+                      newRecord.isMedication ? "border-amber-500 bg-amber-50/50 shadow-xl shadow-amber-100/50" : "border-slate-100 bg-white hover:border-slate-200"
+                    )} onClick={() => setNewRecord({...newRecord, isMedication: !newRecord.isMedication})}>
+                      <div className="flex items-center justify-between mb-4">
+                        <div className={cn(
+                          "w-10 h-10 rounded-2xl flex items-center justify-center transition-colors",
+                          newRecord.isMedication ? "bg-amber-500 text-white" : "bg-slate-50 text-slate-400"
+                        )}>
+                          <Pill className="w-5 h-5" />
+                        </div>
+                        <div className={cn(
+                          "w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all",
+                          newRecord.isMedication ? "border-amber-500 bg-amber-500 scale-110" : "border-slate-200"
+                        )}>
+                          {newRecord.isMedication && <ShieldCheck className="w-3 h-3 text-white" />}
+                        </div>
+                      </div>
+                      <h5 className={cn("text-xs font-black uppercase tracking-widest", newRecord.isMedication ? "text-amber-700" : "text-slate-400")}>
+                        ฝากให้ยา
+                      </h5>
+                      <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Medication Deposit</p>
+                    </div>
+                  </div>
+
+                  <AnimatePresence>
+                    {(newRecord.isBoarding || newRecord.isMedication) && (
+                      <motion.div 
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="space-y-4 pt-2 overflow-hidden"
+                      >
+                        {newRecord.isBoarding && (
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-sky-600 uppercase tracking-widest ml-1">รายละเอียดการฝาก ( Boarding Info )</label>
+                            <textarea
+                              rows={2}
+                              value={newRecord.boardingDetails}
+                              onChange={(e) => setNewRecord({...newRecord, boardingDetails: e.target.value})}
+                              placeholder="เช่น อาหารที่น้องทาน, พฤติกรรมที่ต้องระวัง..."
+                              className="w-full px-5 py-4 bg-sky-50/30 border-2 border-sky-100 focus:border-sky-500 rounded-2xl transition-all outline-none font-medium text-slate-700 resize-none text-xs"
+                            />
+                          </div>
+                        )}
+                        {newRecord.isMedication && (
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-amber-600 uppercase tracking-widest ml-1">รายละเอียดการให้ยา ( Medication Instructions )</label>
+                            <textarea
+                              rows={2}
+                              value={newRecord.medicationDetails}
+                              onChange={(e) => setNewRecord({...newRecord, medicationDetails: e.target.value})}
+                              placeholder="ชื่อยาลำดับที่ 1: เม็ด/ครั้ง, เวลา..."
+                              className="w-full px-5 py-4 bg-amber-50/30 border-2 border-amber-100 focus:border-amber-500 rounded-2xl transition-all outline-none font-medium text-slate-700 resize-none text-xs"
+                            />
+                          </div>
+                        )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Treatment Plan</label>
-                  <textarea
-                    required
-                    rows={3}
-                    value={newRecord.treatmentPlan}
-                    onChange={(e) => setNewRecord({...newRecord, treatmentPlan: e.target.value})}
-                    className="w-full px-5 py-4 bg-slate-50 border-2 border-transparent focus:border-rose-500 focus:bg-white rounded-2xl transition-all outline-none font-bold text-slate-700 resize-none"
-                  />
-                </div>
 
-                <div className="flex gap-4 pt-4">
+
+                <div className="flex gap-4 pt-4 sticky bottom-0 bg-white p-4 -mx-8 border-t border-slate-100 z-20">
                   <button
                     type="button"
                     onClick={() => setIsAddingRecord(false)}

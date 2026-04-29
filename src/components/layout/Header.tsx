@@ -54,52 +54,71 @@ export default function Header({ activeView, setActiveView }: HeaderProps) {
     setIsGlobalSearching(true);
     setShowSearchResults(true);
     try {
-      // Search Patients
-      const patientQ = query(
-        collection(db, 'patients'),
-        where('name', '>=', val),
-        where('name', '<=', val + '\uf8ff'),
-        limit(5)
-      );
-      
-      // Search Inventory
-      const inventoryQ = query(
-        collection(db, 'inventory'),
-        where('itemName', '>=', val),
-        where('itemName', '<=', val + '\uf8ff'),
-        limit(5)
-      );
-
-      const [patientSnap, inventorySnap] = await Promise.all([
-        getDocs(patientQ),
-        getDocs(inventoryQ)
+      // Parallel queries for all 3 concepts: Patient/HN, Owner/Phone, Medicine
+      const [
+        patientNameSnap, 
+        patientHnSnap, 
+        ownerNameSnap, 
+        ownerPhoneSnap, 
+        inventorySnap
+      ] = await Promise.all([
+        getDocs(query(collection(db, 'patients'), where('name', '>=', val), where('name', '<=', val + '\uf8ff'), limit(5))),
+        getDocs(query(collection(db, 'patients'), where('hn', '>=', val), where('hn', '<=', val + '\uf8ff'), limit(5))),
+        getDocs(query(collection(db, 'owners'), where('name', '>=', val), where('name', '<=', val + '\uf8ff'), limit(5))),
+        getDocs(query(collection(db, 'owners'), where('phone', '>=', val), where('phone', '<=', val + '\uf8ff'), limit(5))),
+        getDocs(query(collection(db, 'inventory'), where('itemName', '>=', val), where('itemName', '<=', val + '\uf8ff'), limit(5)))
       ]);
 
-      const patients = patientSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
+      // Merge patient results (from name and HN search)
+      const patientsMap = new Map();
+      [...patientNameSnap.docs, ...patientHnSnap.docs].forEach(doc => {
+        patientsMap.set(doc.id, { id: doc.id, ...doc.data() });
+      });
+
+      // Owners found by name/phone
+      const ownersFoundMap = new Map();
+      [...ownerNameSnap.docs, ...ownerPhoneSnap.docs].forEach(doc => {
+        ownersFoundMap.set(doc.id, { id: doc.id, ...doc.data() });
+      });
+
+      // For owners found, try to find their pets if they aren't already in patientsMap
+      const ownersFoundIds = Array.from(ownersFoundMap.keys());
+      if (ownersFoundIds.length > 0) {
+        const petsOfOwnersSnap = await getDocs(query(
+          collection(db, 'patients'),
+          where('ownerIds', 'array-contains-any', ownersFoundIds.slice(0, 10))
+        ));
+        petsOfOwnersSnap.forEach(doc => {
+          if (!patientsMap.has(doc.id)) {
+            patientsMap.set(doc.id, { id: doc.id, ...doc.data() });
+          }
+        });
+      }
+
+      const patients = Array.from(patientsMap.values());
       
-      // Fetch owners for each patient
-      const ownerIds = Array.from(new Set(patients.flatMap(p => p.ownerIds || [])));
-      const ownersMap: Record<string, string> = {};
+      // Fetch owners for display for all found patients (to show "HN: 123 • Owner Name")
+      const ownerIdsNeeded = Array.from(new Set(patients.flatMap(p => p.ownerIds || [])));
+      const finalOwnersMap: Record<string, string> = {};
       
-      if (ownerIds.length > 0) {
+      if (ownerIdsNeeded.length > 0) {
         try {
-          // Fetch owners in a single query
           const ownersSnap = await getDocs(query(
             collection(db, 'owners'),
-            where('__name__', 'in', ownerIds.slice(0, 10))
+            where('__name__', 'in', ownerIdsNeeded.slice(0, 10))
           ));
           ownersSnap.forEach(doc => {
-            ownersMap[doc.id] = doc.data().name;
+            finalOwnersMap[doc.id] = doc.data().name;
           });
         } catch (ownerErr) {
-          console.error("Error fetching owners for search:", ownerErr);
+          console.error("Error fetching owners for search display:", ownerErr);
         }
       }
 
       setGlobalSearchResults({
         patients: patients.map(p => ({
           ...p,
-          displayOwnerName: p.ownerIds && p.ownerIds.length > 0 ? ownersMap[p.ownerIds[0]] : 'No owner'
+          displayOwnerName: p.ownerIds && p.ownerIds.length > 0 ? finalOwnersMap[p.ownerIds[0]] : 'No owner'
         })),
         inventory: inventorySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
       });
@@ -203,7 +222,7 @@ export default function Header({ activeView, setActiveView }: HeaderProps) {
             <Search className="w-4 h-4 text-slate-400" />
             <input 
               type="text" 
-              placeholder="Search patient or medicine..." 
+              placeholder="Search by Pet, HN, Owner or Phone..." 
               value={globalSearchQuery}
               onChange={(e) => handleGlobalSearch(e.target.value)}
               onFocus={() => globalSearchQuery.length >= 2 && setShowSearchResults(true)}
