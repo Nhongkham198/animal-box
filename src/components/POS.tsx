@@ -54,6 +54,7 @@ export default function POS() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isCheckout, setIsCheckout] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'transfer'>('cash');
+  const [serviceCharge, setServiceCharge] = useState(0);
 
   const formatPhoneNumber = (phone: string | undefined | null) => {
     if (!phone) return '-';
@@ -94,13 +95,26 @@ export default function POS() {
     setSelectedOwner({ phone: ownerPhone, name: ownerName });
     
     // Auto-add items from UNPAID OPD records for these pets
+    const patientIds = pets.map(p => p.id);
     const opdQ = query(
       collection(db, 'opd_records'), 
-      where('patientId', 'in', pets.map(p => p.id)),
+      where('patientId', 'in', patientIds),
       where('billingStatus', '==', 'unpaid')
     );
-    const opdSnap = await getDocs(opdQ);
-    const pendingItems: CartItem[] = [];
+    const ipdQ = query(
+      collection(db, 'ipd_records'),
+      where('patientId', 'in', patientIds),
+      where('billingStatus', '==', 'unpaid')
+    );
+
+    const [opdSnap, ipdSnap] = await Promise.all([
+      getDocs(opdQ),
+      getDocs(ipdQ)
+    ]);
+
+    const pendingItems: any[] = [];
+    
+    // OPD items
     opdSnap.docs.forEach(doc => {
       const data = doc.data();
       if (data.items) {
@@ -114,7 +128,50 @@ export default function POS() {
           });
         });
       }
+      if (data.serviceCharge > 0) {
+        pendingItems.push({
+          id: `opd-sc-${doc.id}`,
+          name: 'Service Charge (OPD)',
+          price: data.serviceCharge,
+          quantity: 1,
+          category: 'Service',
+          petName: data.petName,
+          sourceRecordId: doc.id,
+          sourceType: 'opd'
+        });
+      }
     });
+
+    // IPD items
+    ipdSnap.docs.forEach(doc => {
+      const data = doc.data();
+      // IPD might have its own item list in some implementations, but here it seems diagnosis/treatment based.
+      // If IPD has items, we add them. If not, we definitely add the service charge.
+      if (data.items) {
+        data.items.forEach((item: any, idx: number) => {
+          pendingItems.push({
+            ...item,
+            id: `ipd-${doc.id}-${item.id || idx}`,
+            petName: data.petName,
+            sourceRecordId: doc.id,
+            sourceType: 'ipd'
+          });
+        });
+      }
+      if (data.serviceCharge > 0) {
+        pendingItems.push({
+          id: `ipd-sc-${doc.id}`,
+          name: 'Service Charge (IPD)',
+          price: data.serviceCharge,
+          quantity: 1,
+          category: 'Service',
+          petName: data.petName,
+          sourceRecordId: doc.id,
+          sourceType: 'ipd'
+        });
+      }
+    });
+
     setCart(pendingItems);
   };
 
@@ -159,7 +216,8 @@ export default function POS() {
     setCart(prev => prev.filter(i => i.id !== id));
   };
 
-  const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const total = subtotal + serviceCharge;
 
   const handleCheckout = async () => {
     try {
@@ -168,6 +226,8 @@ export default function POS() {
         ownerId: selectedOwner?.phone,
         ownerName: selectedOwner?.name,
         items: cart,
+        subtotal,
+        serviceCharge,
         total,
         paymentMethod,
         patientIds: ownerPets.map(p => p.id),
@@ -178,6 +238,11 @@ export default function POS() {
       const sourceOpdIds = Array.from(new Set(cart.filter(i => (i as any).sourceType === 'opd').map(i => (i as any).sourceRecordId)));
       await Promise.all(sourceOpdIds.map(id => 
         updateDoc(doc(db, 'opd_records', id as string), { billingStatus: 'paid' })
+      ));
+
+      const sourceIpdIds = Array.from(new Set(cart.filter(i => (i as any).sourceType === 'ipd').map(i => (i as any).sourceRecordId)));
+      await Promise.all(sourceIpdIds.map(id => 
+        updateDoc(doc(db, 'ipd_records', id as string), { billingStatus: 'paid' })
       ));
 
       // 3. Deduct Inventory
@@ -347,8 +412,23 @@ export default function POS() {
           <div className="p-6 bg-slate-50 border-t border-slate-100 space-y-4">
             <div className="flex items-center justify-between text-slate-400 text-xs font-bold uppercase tracking-widest">
               <span>Subtotal</span>
-              <span>{total.toLocaleString()} ฿</span>
+              <span>{subtotal.toLocaleString()} ฿</span>
             </div>
+            
+            <div className="flex items-center justify-between text-slate-400 text-xs font-bold uppercase tracking-widest">
+              <span>Service Charge</span>
+              <div className="flex items-center gap-2">
+                <input 
+                  type="number" 
+                  value={serviceCharge || ''}
+                  onChange={(e) => setServiceCharge(Number(e.target.value))}
+                  placeholder="0"
+                  className="w-24 px-2 py-1 bg-white border border-slate-200 rounded-lg text-right font-black text-slate-700 focus:ring-2 focus:ring-[#00b4d8] outline-none"
+                />
+                <span>฿</span>
+              </div>
+            </div>
+
             <div className="flex items-center justify-between text-slate-800 font-black text-2xl">
               <span>Total</span>
               <span className="text-[#00b4d8]">{total.toLocaleString()} ฿</span>

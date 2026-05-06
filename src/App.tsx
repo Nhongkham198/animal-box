@@ -185,6 +185,26 @@ function AppContent() {
     );
   };
 
+  const constraintsRef = React.useRef(null);
+  const [fabSide, setFabSide] = useState<'left' | 'right'>('right');
+  const [fabVertical, setFabVertical] = useState<'top' | 'bottom'>('bottom');
+
+  const onDragEnd = (_: any, info: any) => {
+    // Horizontal side detection
+    if (info.point.x < window.innerWidth / 2) {
+      setFabSide('left');
+    } else {
+      setFabSide('right');
+    }
+
+    // Vertical side detection
+    if (info.point.y < window.innerHeight / 2) {
+      setFabVertical('top');
+    } else {
+      setFabVertical('bottom');
+    }
+  };
+
   if (loading || !isAuthReady) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -338,7 +358,8 @@ function AppContent() {
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-slate-50 flex">
+      <div ref={constraintsRef} className="fixed inset-0 pointer-events-none z-0" />
+      <div className="min-h-screen bg-slate-50 flex overflow-hidden">
         <Sidebar 
           isOpen={isSidebarOpen}
           setIsOpen={setIsSidebarOpen}
@@ -350,7 +371,7 @@ function AppContent() {
         />
 
         {/* Main Content */}
-        <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
           {quotaExceeded && (
             <div className="bg-rose-500 text-white px-6 py-3 flex items-center justify-between gap-4 animate-in slide-in-from-top duration-300">
               <div className="flex items-center gap-3">
@@ -422,56 +443,48 @@ function AppContent() {
           </div>
         </main>
 
-        {/* Floating Action Button */}
         <motion.div 
           drag
+          dragConstraints={constraintsRef}
           dragMomentum={false}
-          className="fixed bottom-8 right-8 z-50 flex flex-col-reverse items-end gap-4 group cursor-grab active:cursor-grabbing"
+          dragElastic={0}
+          onDragEnd={onDragEnd}
+          className={cn(
+            "fixed z-50 flex gap-4 group cursor-grab active:cursor-grabbing touch-none",
+            fabVertical === 'bottom' ? "bottom-8" : "top-8",
+            fabSide === 'right' ? "right-8 items-end" : "left-8 items-start",
+            fabVertical === 'bottom' ? "flex-col-reverse" : "flex-col"
+          )}
         >
           <button className="w-14 h-14 bg-[#00b4d8] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group-hover:rotate-45 pointer-events-none">
             <Plus className="w-8 h-8" />
           </button>
           
-          <div className="flex flex-col-reverse gap-3 opacity-0 translate-y-10 pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto transition-all duration-300">
-            <button 
-              onClick={() => setActiveView('dashboard')}
-              className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all"
-            >
-              <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">Home</span>
-              <div className="w-8 h-8 bg-blue-50 text-[#00b4d8] rounded-lg flex items-center justify-center">
-                <LayoutDashboard className="w-4 h-4" />
-              </div>
-            </button>
-
-            <button 
-              onClick={() => setActiveView('add-pet')}
-              className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all"
-            >
-              <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">Add Pet</span>
-              <div className="w-8 h-8 bg-rose-50 text-rose-500 rounded-lg flex items-center justify-center">
-                <PawPrint className="w-4 h-4" />
-              </div>
-            </button>
-            
-            <button 
-              onClick={() => setActiveView('appointments')}
-              className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all"
-            >
-              <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">Appointment</span>
-              <div className="w-8 h-8 bg-indigo-50 text-indigo-500 rounded-lg flex items-center justify-center">
-                <Calendar className="w-4 h-4" />
-              </div>
-            </button>
-
-            <button 
-              onClick={() => setActiveView('pos')}
-              className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all"
-            >
-              <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">POS Billing</span>
-              <div className="w-8 h-8 bg-emerald-50 text-emerald-500 rounded-lg flex items-center justify-center">
-                <CreditCard className="w-4 h-4" />
-              </div>
-            </button>
+          <div className={cn(
+            "flex gap-3 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto transition-all duration-300",
+            fabVertical === 'bottom' ? "flex-col-reverse translate-y-10" : "flex-col -translate-y-10",
+            fabSide === 'right' ? "items-end" : "items-start"
+          )}>
+            {[
+              { id: 'dashboard', label: 'Home', icon: LayoutDashboard, color: 'bg-blue-50 text-[#00b4d8]' },
+              { id: 'add-pet', label: 'Add Pet', icon: PawPrint, color: 'bg-rose-50 text-rose-500' },
+              { id: 'appointments', label: 'Appointment', icon: Calendar, color: 'bg-indigo-50 text-indigo-500' },
+              { id: 'pos', label: 'POS Billing', icon: CreditCard, color: 'bg-emerald-50 text-emerald-500' }
+            ].map((item) => (
+              <button 
+                key={item.id}
+                onClick={() => setActiveView(item.id as View)}
+                className={cn(
+                  "flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all whitespace-nowrap",
+                  fabSide === 'right' ? "flex-row" : "flex-row-reverse"
+                )}
+              >
+                <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">{item.label}</span>
+                <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center", item.color)}>
+                  <item.icon className="w-4 h-4" />
+                </div>
+              </button>
+            ))}
           </div>
         </motion.div>
       </div>

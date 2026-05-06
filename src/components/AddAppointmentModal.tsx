@@ -99,61 +99,90 @@ export default function AddAppointmentModal({ isOpen, onClose }: AddAppointmentM
 
   const handleSearchPatient = async (val: string) => {
     setPatientSearch(val);
-    if (val.length < 2) {
+    if (val.trim().length < 1) {
       setSearchResults([]);
       return;
     }
 
     setIsSearching(true);
     try {
-      // Search by Pet Name
+      const queryParts = val.trim().split(/\s+/);
+      const isDualSearch = queryParts.length > 1;
+      const petQueryTerm = queryParts[0];
+      const ownerQueryTerm = isDualSearch ? queryParts[1] : null;
+
+      // 1. Initial Queries
       const nameQ = query(
         collection(db, 'patients'),
-        where('name', '>=', val),
-        where('name', '<=', val + '\uf8ff'),
-        limit(5)
+        where('name', '>=', petQueryTerm),
+        where('name', '<=', petQueryTerm + '\uf8ff'),
+        limit(isDualSearch ? 20 : 10)
       );
       
-      // Search by HN
       const hnQ = query(
         collection(db, 'patients'),
-        where('hn', '>=', val.toUpperCase()),
-        where('hn', '<=', val.toUpperCase() + '\uf8ff'),
+        where('hn', '>=', val.toUpperCase().trim()),
+        where('hn', '<=', val.toUpperCase().trim() + '\uf8ff'),
         limit(5)
       );
 
-      // Search by Owner Name
-      const ownerQ = query(
-        collection(db, 'owners'),
-        where('name', '>=', val),
-        where('name', '<=', val + '\uf8ff'),
-        limit(5)
-      );
-
-      const [nameSnap, hnSnap, ownerSnap] = await Promise.all([
+      const [nameSnap, hnSnap] = await Promise.all([
         getDocs(nameQ).catch(e => { console.warn("Appt search - Name fetch warning:", e); return { empty: true, docs: [] }; }), 
-        getDocs(hnQ).catch(e => { console.warn("Appt search - HN fetch warning:", e); return { empty: true, docs: [] }; }),
-        getDocs(ownerQ).catch(e => { console.warn("Appt search - Owner fetch warning:", e); return { empty: true, docs: [] }; })
+        getDocs(hnQ).catch(e => { console.warn("Appt search - HN fetch warning:", e); return { empty: true, docs: [] }; })
       ]);
       
-      const resultsMap = new Map();
-      nameSnap.docs.forEach(doc => resultsMap.set(doc.id, { id: doc.id, ...doc.data() }));
-      hnSnap.docs.forEach(doc => resultsMap.set(doc.id, { id: doc.id, ...doc.data() }));
-      
-      if (!ownerSnap.empty) {
-        const ownerIds = ownerSnap.docs.map(doc => doc.id);
-        // We need to find patients associated with these owners
-        // Note: array-contains-any is limited to 10 items, which is fine here
-        const patientsByOwnerQ = query(
-          collection(db, 'patients'),
-          where('ownerIds', 'array-contains-any', ownerIds),
-          limit(10)
+      let initialResults = new Map();
+      nameSnap.docs.forEach((doc: any) => initialResults.set(doc.id, { id: doc.id, ...doc.data() }));
+      hnSnap.docs.forEach((doc: any) => initialResults.set(doc.id, { id: doc.id, ...doc.data() }));
+
+      // 2. Search by Owner if not dual search
+      if (!isDualSearch) {
+        const ownerQ = query(
+          collection(db, 'owners'),
+          where('name', '>=', val),
+          where('name', '<=', val + '\uf8ff'),
+          limit(5)
         );
-        const patientsByOwnerSnap = await getDocs(patientsByOwnerQ);
-        patientsByOwnerSnap.docs.forEach(doc => resultsMap.set(doc.id, { id: doc.id, ...doc.data() }));
+        const ownerSnap = await getDocs(ownerQ).catch(() => ({ empty: true, docs: [] }));
+        if (!ownerSnap.empty) {
+          const ownerIds = ownerSnap.docs.map(doc => doc.id);
+          const patientsByOwnerQ = query(
+            collection(db, 'patients'),
+            where('ownerIds', 'array-contains-any', ownerIds),
+            limit(10)
+          );
+          const patientsByOwnerSnap = await getDocs(patientsByOwnerQ);
+          patientsByOwnerSnap.docs.forEach((doc: any) => initialResults.set(doc.id, { id: doc.id, ...doc.data() }));
+        }
       }
       
-      setSearchResults(Array.from(resultsMap.values()));
+      const resultsArray = Array.from(initialResults.values());
+      
+      // 3. Enhance and Filter
+      const enhancedResults = await Promise.all(resultsArray.map(async (p: any) => {
+        if (p.ownerIds && p.ownerIds.length > 0) {
+          try {
+            const ownerSnap = await getDocs(query(collection(db, 'owners'), where('__name__', 'in', p.ownerIds)));
+            if (!ownerSnap.empty) {
+              const oData = ownerSnap.docs[0].data();
+              return { ...p, ownerName: oData.name, ownerPhone: oData.phone };
+            }
+          } catch (e) {
+            console.warn("Owner fetch error in search:", e);
+          }
+        }
+        return p;
+      }));
+
+      // If dual search, filter out those that don't match ownerQueryTerm
+      let finalResults = enhancedResults;
+      if (isDualSearch && ownerQueryTerm) {
+        finalResults = enhancedResults.filter((p: any) => 
+          p.ownerName?.toLowerCase().includes(ownerQueryTerm.toLowerCase())
+        );
+      }
+
+      setSearchResults(finalResults.slice(0, 10));
     } catch (err) {
       console.warn("Error searching results (check permissions):", err);
     } finally {
@@ -326,8 +355,20 @@ export default function AddAppointmentModal({ isOpen, onClose }: AddAppointmentM
                               <User className="w-5 h-5 text-indigo-500" />
                             </div>
                             <div>
-                              <p className="font-black text-slate-800">{p.name}</p>
-                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">HN: {p.hn || '-'} • {p.species} • Owner: {p.ownerName || 'N/A'}</p>
+                              <p className="text-base font-black text-slate-800 leading-tight mb-1">{p.name}</p>
+                              <div className="flex flex-wrap items-center gap-y-1.5 gap-x-2">
+                                <span className="bg-indigo-50 px-2 py-0.5 rounded text-[11px] font-bold text-indigo-500 font-mono border border-indigo-100/50">HN: {p.hn || '-'}</span>
+                                <span className="h-3 w-[1px] bg-slate-200 hidden sm:block" />
+                                <span className="text-rose-500 text-[11px] font-black uppercase tracking-tight">เจ้าของ: {p.ownerName || 'N/A'}</span>
+                                {p.ownerPhone && (
+                                  <>
+                                    <span className="text-slate-200 text-xs">/</span>
+                                    <span className="text-slate-500 text-[11px] font-bold">{p.ownerPhone}</span>
+                                  </>
+                                )}
+                                <span className="h-3 w-[1px] bg-slate-200 hidden sm:block" />
+                                <span className="text-indigo-600 bg-indigo-50/50 px-2 py-0.5 rounded text-[11px] font-black uppercase tracking-tight border border-indigo-100/30">{p.species || 'ไม่ระบุชนิด'}</span>
+                              </div>
                             </div>
                           </div>
                           <div className="flex items-center gap-2 text-indigo-600 font-bold text-xs uppercase tracking-widest">

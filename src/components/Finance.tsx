@@ -21,6 +21,7 @@ import {
   onSnapshot, 
   query, 
   orderBy,
+  where,
   handleFirestoreError,
   OperationType,
   addDoc,
@@ -102,28 +103,84 @@ export default function Finance() {
       setLoading(false);
     });
 
-    // Listen to OPD records for income
-    const qIncome = query(collection(db, 'opd_records'), orderBy('dateVisit', 'desc'));
-    const unsubscribeIncome = onSnapshot(qIncome, (incomeSnap) => {
-      incData = incomeSnap.docs.map((doc, idx) => ({
-        id: `inc-${doc.id}-${idx}`,
-        realId: doc.id,
-        date: doc.data().dateVisit,
-        description: `OPD: ${doc.data().petName} - ${doc.data().category}`,
-        amount: doc.data().revenue,
-        category: doc.data().category,
-        type: 'income' as const,
-        createdBy: 'System'
-      } as Transaction));
+    // Listen to income from various sources
+    const qOpd = query(collection(db, 'opd_records'), where('billingStatus', '==', 'paid'), orderBy('dateVisit', 'desc'));
+    const qIpd = query(collection(db, 'ipd_records'), where('billingStatus', '==', 'paid'), orderBy('dateAdmit', 'desc'));
+    const qSales = query(collection(db, 'sales'), orderBy('createdAt', 'desc'));
+
+    let opdInc: Transaction[] = [];
+    let ipdInc: Transaction[] = [];
+    let salesInc: Transaction[] = [];
+
+    const updateIncomes = () => {
+      incData = [...opdInc, ...ipdInc, ...salesInc];
       updateAll();
-    }, (err) => {
-      console.warn("OPD records listener (finance) restricted:", err.message);
-      setLoading(false);
+    };
+
+    const unsubscribeOpd = onSnapshot(qOpd, (snap) => {
+      opdInc = snap.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: `opd-${doc.id}`,
+          realId: doc.id,
+          date: data.dateVisit,
+          description: `OPD: ${data.petName}`,
+          amount: (data.revenue || 0) + (data.serviceCharge || 0),
+          category: 'Treatment',
+          type: 'income',
+          createdBy: 'System'
+        } as Transaction;
+      });
+      updateIncomes();
+    });
+
+    const unsubscribeIpd = onSnapshot(qIpd, (snap) => {
+      ipdInc = snap.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: `ipd-${doc.id}`,
+          realId: doc.id,
+          date: data.dateAdmit,
+          description: `IPD: ${data.petName}`,
+          amount: (data.revenue || 0) + (data.serviceCharge || 0),
+          category: 'Hospitalization',
+          type: 'income',
+          createdBy: 'System'
+        } as Transaction;
+      });
+      updateIncomes();
+    });
+
+    const unsubscribeSales = onSnapshot(qSales, (snap) => {
+      salesInc = snap.docs.map(doc => {
+        const data = doc.data();
+        // Filters out items from source records to avoid double counting if needed
+        // Actually, in the current app, sales contains items from OPD.
+        // Let's refine: if it's a direct sales (no source record), count it.
+        const isDirectSale = !data.items?.some((i: any) => i.sourceType === 'opd' || i.sourceType === 'ipd');
+        
+        if (isDirectSale) {
+          return {
+            id: `sale-${doc.id}`,
+            realId: doc.id,
+            date: data.createdAt,
+            description: `POS Sale: ${data.ownerName || 'Walk-in'}`,
+            amount: data.total,
+            category: 'POS',
+            type: 'income',
+            createdBy: 'POS'
+          } as Transaction;
+        }
+        return null;
+      }).filter(Boolean) as Transaction[];
+      updateIncomes();
     });
 
     return () => {
       unsubscribeExpenses();
-      unsubscribeIncome();
+      unsubscribeOpd();
+      unsubscribeIpd();
+      unsubscribeSales();
     };
   }, [isAuthReady, user, isStaff]);
 

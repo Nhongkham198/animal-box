@@ -77,7 +77,90 @@ export default function Dashboard() {
   const [revenueData, setRevenueData] = useState<any[]>([]);
   const [topDiagnoses, setTopDiagnoses] = useState<any[]>([]);
   const [topMeds, setTopMeds] = useState<any[]>([]);
+  const [uniquePatientsCount, setUniquePatientsCount] = useState(0);
+  const [vaccinesCount, setVaccinesCount] = useState(0);
   const [patientsMap, setPatientsMap] = useState<Record<string, any>>({});
+
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+
+  useEffect(() => {
+    if (!isAuthReady || !user) return;
+
+    const fetchTrendsData = async () => {
+      try {
+        const monthStart = new Date(selectedYear, selectedMonth, 1);
+        const monthEnd = new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59, 999);
+
+        // Fetch OPD records for the selected month/year
+        const trendOpdSnap = await getDocs(query(
+          collection(db, 'opd_records'), 
+          where('dateVisit', '>=', monthStart),
+          where('dateVisit', '<=', monthEnd)
+        )).catch(e => { 
+          console.warn("Trend OPD fetch denied", e); 
+          return { size: 0, docs: [] }; 
+        }) as any;
+
+        const opds = trendOpdSnap.docs.map((doc: any) => doc.data());
+        
+        // Calculate Unique Patients
+        const uniqueIds = new Set(opds.filter((o: any) => o.patientId).map((o: any) => o.patientId));
+        setUniquePatientsCount(uniqueIds.size);
+
+        // Calculate Vaccines (Placeholder keyword check)
+        let vCount = 0;
+        opds.forEach((o: any) => {
+          if (o.items) {
+            o.items.forEach((it: any) => {
+              const nameLower = (it.name || '').toLowerCase();
+              if (it.category === 'Service' && (nameLower.includes('vaccine') || nameLower.includes('วัคซีน'))) {
+                vCount += (it.quantity || 1);
+              } else if (it.category === 'Medicine' && (nameLower.includes('vaccine') || nameLower.includes('วัคซีน'))) {
+                vCount += (it.quantity || 1);
+              }
+            });
+          }
+        });
+        setVaccinesCount(vCount);
+
+        // Update Diagnoses
+        const diagMap: Record<string, number> = {};
+        opds.forEach((o: any) => {
+          if (o.finalDiagnosis) {
+            diagMap[o.finalDiagnosis] = (diagMap[o.finalDiagnosis] || 0) + 1;
+          }
+        });
+        const diags = Object.entries(diagMap)
+          .map(([name, value]) => ({ name, value }))
+          .sort((a, b) => b.value - a.value)
+          .slice(0, 5);
+        setTopDiagnoses(diags);
+
+        // Update Meds
+        const medMap: Record<string, number> = {};
+        opds.forEach((o: any) => {
+          if (o.items) {
+            o.items.forEach((it: any) => {
+              if (it.category === 'Medicine') {
+                medMap[it.name] = (medMap[it.name] || 0) + (it.quantity || 1);
+              }
+            });
+          }
+        });
+        const meds = Object.entries(medMap)
+          .map(([name, value]) => ({ name, value }))
+          .sort((a, b) => b.value - a.value)
+          .slice(0, 5);
+        setTopMeds(meds);
+
+      } catch (err) {
+        console.warn("Error fetching trends data:", err);
+      }
+    };
+
+    fetchTrendsData();
+  }, [selectedMonth, selectedYear, isAuthReady, user, isStaff, isAdmin]);
 
   useEffect(() => {
     if (!isAuthReady || !user) return;
@@ -195,36 +278,6 @@ export default function Dashboard() {
         }).reverse();
         setRevenueData(last7Days);
 
-        // Health Trends
-        const opds = thisMonthOpdSnap.docs.map(doc => doc.data());
-        const diagMap: Record<string, number> = {};
-        opds.forEach(o => {
-          if (o.finalDiagnosis) {
-            diagMap[o.finalDiagnosis] = (diagMap[o.finalDiagnosis] || 0) + 1;
-          }
-        });
-        const diags = Object.entries(diagMap)
-          .map(([name, value]) => ({ name, value }))
-          .sort((a, b) => b.value - a.value)
-          .slice(0, 5);
-        setTopDiagnoses(diags);
-
-        const medMap: Record<string, number> = {};
-        opds.forEach(o => {
-          if (o.items) {
-            o.items.forEach((it: any) => {
-              if (it.category === 'Medicine') {
-                medMap[it.name] = (medMap[it.name] || 0) + (it.quantity || 1);
-              }
-            });
-          }
-        });
-        const meds = Object.entries(medMap)
-          .map(([name, value]) => ({ name, value }))
-          .sort((a, b) => b.value - a.value)
-          .slice(0, 5);
-        setTopMeds(meds);
-
         // Sort today's schedule
         const sortedSchedule = todayApptsDocs
           .sort((a: any, b: any) => {
@@ -315,22 +368,76 @@ export default function Dashboard() {
       {/* Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-white rounded-3xl shadow-sm border border-slate-100 p-8">
-          <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-8">Revenue Insights</h3>
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={revenueData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} />
-                <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
-                <Area type="monotone" dataKey="revenue" stroke="#00b4d8" strokeWidth={3} fill="#00b4d8" fillOpacity={0.1} />
-              </AreaChart>
-            </ResponsiveContainer>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="md:col-span-2">
+              <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-8">Revenue Insights</h3>
+              <div className="h-[250px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={revenueData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} />
+                    <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
+                    <Area type="monotone" dataKey="revenue" stroke="#00b4d8" strokeWidth={3} fill="#00b4d8" fillOpacity={0.1} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div className="bg-slate-50/50 rounded-2xl p-6 flex flex-col justify-center gap-6">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-sky-500 mb-1">
+                  <Users className="w-4 h-4" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Monthly Analysis</span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-black text-slate-900">{uniquePatientsCount}</span>
+                  <span className="text-xs font-bold text-slate-400 uppercase">Unique Pets</span>
+                </div>
+                <p className="text-[10px] text-slate-400 font-medium">Distinct pets treated in {format(new Date(selectedYear, selectedMonth, 1), 'MMMM')}</p>
+              </div>
+
+              <div className="h-px bg-slate-100" />
+
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-emerald-500 mb-1">
+                  <Plus className="w-4 h-4" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Prevention</span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-black text-slate-900">{vaccinesCount}</span>
+                  <span className="text-xs font-bold text-slate-400 uppercase">Vaccines</span>
+                </div>
+                <p className="text-[10px] text-slate-400 font-medium">Total vaccination services administered</p>
+              </div>
+            </div>
           </div>
         </div>
 
         <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-8">
-          <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-8">Health Trends</h3>
+          <div className="flex items-center justify-between mb-8">
+            <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Health Trends</h3>
+            <div className="flex items-center gap-2">
+              <select 
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
+                className="text-[10px] font-black uppercase tracking-widest bg-slate-50 border-none rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-sky-400"
+              >
+                {Array.from({ length: 12 }).map((_, i) => (
+                  <option key={i} value={i}>{format(new Date(2024, i, 1), 'MMM')}</option>
+                ))}
+              </select>
+              <select 
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+                className="text-[10px] font-black uppercase tracking-widest bg-slate-50 border-none rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-sky-400"
+              >
+                {Array.from({ length: 3 }).map((_, i) => {
+                  const year = new Date().getFullYear() - 1 + i;
+                  return <option key={year} value={year}>{year}</option>;
+                })}
+              </select>
+            </div>
+          </div>
           <div className="space-y-6">
             {topDiagnoses.map((diag, i) => (
               <div key={i} className="space-y-2">

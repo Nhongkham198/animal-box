@@ -2,13 +2,16 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Plus, 
+  Minus,
   Search, 
   ChevronLeft, 
   ChevronRight, 
+  ChevronUp,
   ChevronDown,
   Calendar,
   ArrowRight,
   X,
+  Maximize2,
   Upload,
   FileText,
   Trash2,
@@ -40,6 +43,8 @@ import {
   updateDoc,
   deleteDoc,
   doc,
+  setDoc,
+  getDoc,
   serverTimestamp,
   getDocs,
   limit
@@ -47,6 +52,7 @@ import {
 import { useAsyncError } from '../hooks/useAsyncError';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
+import { AnatomyMap } from './AnatomyMap';
 import { 
   format, 
   startOfMonth, 
@@ -71,6 +77,28 @@ interface OPDItem {
   price: number;
   category: string;
   type?: 'Oral' | 'Injection' | 'Service' | 'None';
+  usageMethod?: string;
+  usageLocation?: string;
+  dosage?: string;
+  unit?: string;
+  timingMeal?: 'Before' | 'After' | 'With' | 'Other';
+  timingDetail?: string;
+  frequency?: {
+    morning: boolean;
+    noon: boolean;
+    evening: boolean;
+    bedtime: boolean;
+  };
+  interval?: string;
+  onCondition?: boolean;
+  isWarning?: boolean;
+  noEat?: boolean;
+  refrigerate?: boolean;
+  shake?: boolean;
+  purpose?: string;
+  woundCare?: boolean;
+  woundCareDescription?: string;
+  anatomicalParts?: string[];
 }
 
 interface OPDRecord {
@@ -83,6 +111,10 @@ interface OPDRecord {
   category: 'Treatment' | 'Grooming' | 'Vaccine' | 'Other';
   finalDiagnosis: string;
   revenue: number;
+  isFollowUp?: boolean;
+  groomingSize?: 'Small' | 'Medium' | 'Large';
+  groomingTreatment?: boolean;
+  groomingNotes?: string;
   attachments?: string[];
   items?: OPDItem[];
   billingStatus?: 'unpaid' | 'paid' | 'none';
@@ -94,6 +126,7 @@ interface OPDRecord {
   };
   treatmentTx?: string;
   recipereRx?: string;
+  physicalExaminationPe?: string;
   plan?: string;
   clientEducation?: string;
   chiefComplaint?: string;
@@ -127,9 +160,11 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
   const [patients, setPatients] = useState<any[]>([]);
+  const [activeStep, setActiveStep] = useState(1);
+  const [pastRecords, setPastRecords] = useState<any[]>([]);
+  const [isBodyMapOpen, setIsBodyMapOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // New Record State
   const [newRecord, setNewRecord] = useState<any>({
     patientId: '',
     petName: '',
@@ -138,14 +173,15 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
     status: 'Completed',
     attachments: [],
     items: [],
-    vitals: {
-      weight: '',
-      temp: '',
-      heartRate: '',
-      respiratoryRate: ''
-    },
+    isFollowUp: false,
+    groomingSize: 'Small',
+    groomingTreatment: false,
+    groomingNotes: '',
+    serviceCharge: 0,
+    vitals: { weight: '', temp: '', heartRate: '', respiratoryRate: '' },
     treatmentTx: '',
     recipereRx: '',
+    physicalExaminationPe: '',
     plan: '',
     clientEducation: '',
     chiefComplaint: '',
@@ -154,16 +190,126 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
     typeOfFood: ''
   });
 
-  const [pastRecords, setPastRecords] = useState<any[]>([]);
-  const [activeStep, setActiveStep] = useState(1);
+  const [mergedBillingRecords, setMergedBillingRecords] = useState<any[]>([]);
+  const [showMergeModal, setShowMergeModal] = useState(false);
+  const [mergeSearchQuery, setMergeSearchQuery] = useState('');
+  const [targetPetId, setTargetPetId] = useState<string>('');
 
-  const [newItem, setNewItem] = useState({
+  useEffect(() => {
+    if (newRecord.patientId && !targetPetId) {
+      setTargetPetId(newRecord.patientId);
+    }
+  }, [newRecord.patientId, targetPetId]);
+
+  const availableMergePatients = useMemo(() => {
+    return opdQueue.filter(q => q.patientId !== newRecord.patientId);
+  }, [opdQueue, newRecord.patientId]);
+
+  const handleMergePatient = (queueItem: OPDQueueItem) => {
+    if (mergedBillingRecords.find(r => r.patientId === queueItem.patientId)) {
+      setShowMergeModal(false);
+      return;
+    }
+    setMergedBillingRecords(prev => [...prev, {
+      patientId: queueItem.patientId,
+      petName: queueItem.patientName,
+      items: [],
+      id: queueItem.id
+    }]);
+    setShowMergeModal(false);
+  };
+
+  const removeMergedRecord = (patientId: string) => {
+    setMergedBillingRecords(prev => prev.filter(r => r.patientId !== patientId));
+  };
+
+  const [customAnatomySvg, setCustomAnatomySvg] = useState<string | undefined>(undefined);
+  const [isAnatomyZoomed, setIsAnatomyZoomed] = useState(false);
+  const [anatomicalMappings, setAnatomicalMappings] = useState<Record<string, string[]>>({});
+
+  // Load custom anatomy map and mappings from database
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const [configDoc, mappingsDoc] = await Promise.all([
+          getDoc(doc(db, 'settings', 'anatomy_map_config')),
+          getDoc(doc(db, 'settings', 'anatomy_mappings'))
+        ]);
+
+        if (configDoc.exists()) {
+          setCustomAnatomySvg(configDoc.data().svgContent);
+        }
+        if (mappingsDoc.exists()) {
+          setAnatomicalMappings(mappingsDoc.data().mappings || {});
+        }
+      } catch (error) {
+        console.error("Error loading anatomy data:", error);
+      }
+    };
+    loadConfig();
+  }, []);
+
+  const handleSvgImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const content = event.target?.result as string;
+        if (content.toLowerCase().includes('<svg')) {
+          setCustomAnatomySvg(content);
+          // Persist to database
+          try {
+            await setDoc(doc(db, 'settings', 'anatomy_map_config'), {
+              svgContent: content,
+              updatedAt: serverTimestamp(),
+              updatedBy: user?.email || 'unknown'
+            }, { merge: true });
+          } catch (error) {
+            handleFirestoreError(error, OperationType.WRITE, 'settings/anatomy_map_config');
+          }
+        }
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  const [newItem, setNewItem] = useState<Partial<OPDItem>>({
     name: '',
     quantity: 1,
     price: 0,
     category: 'Medicine',
-    type: 'Oral' as 'Oral' | 'Injection' | 'Service' | 'None'
+    type: 'Oral',
+    usageMethod: 'กิน',
+    unit: 'เม็ด',
+    usageLocation: '',
+    dosage: '1',
+    timingMeal: 'After',
+    timingDetail: '',
+    frequency: {
+      morning: false,
+      noon: false,
+      evening: false,
+      bedtime: false
+    },
+    interval: '',
+    onCondition: false,
+    isWarning: false,
+    noEat: false,
+    refrigerate: false,
+    shake: false,
+    purpose: '',
+    woundCare: false,
+    woundCareDescription: '',
+    anatomicalParts: []
   });
+
+  const totalAmount = useMemo(() => {
+    const mainTotal = (newRecord.items || []).reduce((sum: number, i: any) => sum + (i.price * i.quantity), 0);
+    const mergedTotal = (mergedBillingRecords || []).reduce((sum, r) => {
+      return sum + (r.items || []).reduce((s: number, i: any) => s + (i.price * i.quantity), 0);
+    }, 0);
+    return mainTotal + mergedTotal + (newRecord.serviceCharge || 0);
+  }, [newRecord.items, mergedBillingRecords, newRecord.serviceCharge]);
 
   const [petSearchQuery, setPetSearchQuery] = useState('');
   const [isPetDropdownOpen, setIsPetDropdownOpen] = useState(false);
@@ -200,9 +346,28 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
 
   const filteredPatientsForSelect = useMemo(() => {
     if (!petSearchQuery) return patients;
-    return patients.filter(p => 
-      p.name.toLowerCase().includes(petSearchQuery.toLowerCase())
-    );
+    const parts = petSearchQuery.toLowerCase().trim().split(/\s+/);
+    
+    return patients.filter(p => {
+      if (parts.length === 1) {
+        // Single word: search pet name, HN, or species
+        const query = parts[0];
+        return (
+          p.name.toLowerCase().includes(query) || 
+          (p.hn && p.hn.toLowerCase().includes(query)) ||
+          (p.species && p.species.toLowerCase().includes(query))
+        );
+      } else {
+        // Multiple words: Pet Name [Space] Owner Name
+        const petNameQuery = parts[0];
+        const ownerNameQuery = parts.slice(1).join(' ');
+        
+        const petMatch = p.name.toLowerCase().includes(petNameQuery);
+        const ownerMatch = (p.ownerName || '').toLowerCase().includes(ownerNameQuery);
+        
+        return petMatch && ownerMatch;
+      }
+    });
   }, [patients, petSearchQuery]);
 
   useEffect(() => {
@@ -273,35 +438,87 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
 
   const handleAddRecord = async (e: React.FormEvent) => {
     e.preventDefault();
-    const totalRevenue = newRecord.items.reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0);
     
+    // 1. Prepare main record data
+    const mainRevenue = (newRecord.items || []).reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0);
+    const mainDiagnosis = [
+      newRecord.chiefComplaint && `CC: ${newRecord.chiefComplaint}`,
+      newRecord.historyTaking && `HT: ${newRecord.historyTaking}`,
+      newRecord.problemList && `Prob: ${newRecord.problemList}`,
+      newRecord.physicalExaminationPe && `PE: ${newRecord.physicalExaminationPe}`,
+      newRecord.treatmentTx && `Tx: ${newRecord.treatmentTx}`,
+      newRecord.recipereRx && `Rx: ${newRecord.recipereRx}`,
+      newRecord.plan && `Plan: ${newRecord.plan}`,
+      newRecord.clientEducation && `Education: ${newRecord.clientEducation}`,
+      newRecord.typeOfFood && `Food: ${newRecord.typeOfFood}`,
+      newRecord.vitals?.weight && `Weight: ${newRecord.vitals.weight}kg`,
+      newRecord.vitals?.temp && `Temp: ${newRecord.vitals.temp}C`
+    ].filter(Boolean).join('\n');
+
     try {
+      // 2. Save main record
       if (editingRecordId) {
         await updateDoc(doc(db, 'opd_records', editingRecordId), {
           ...newRecord,
-          revenue: totalRevenue,
+          finalDiagnosis: mainDiagnosis,
+          revenue: mainRevenue,
+          isFollowUp: newRecord.isFollowUp || false,
           status: 'Completed',
-          billingStatus: totalRevenue > 0 ? 'unpaid' : 'none',
+          billingStatus: (mainRevenue > 0 || newRecord.serviceCharge > 0) ? 'unpaid' : 'none',
           updatedAt: serverTimestamp()
         });
       } else {
         await addDoc(collection(db, 'opd_records'), {
           ...newRecord,
-          revenue: totalRevenue,
+          finalDiagnosis: mainDiagnosis,
+          revenue: mainRevenue,
+          isFollowUp: newRecord.isFollowUp || false,
           status: 'Completed',
-          billingStatus: totalRevenue > 0 ? 'unpaid' : 'none',
+          billingStatus: (mainRevenue > 0 || newRecord.serviceCharge > 0) ? 'unpaid' : 'none',
           dateVisit: serverTimestamp(),
           createdAt: serverTimestamp()
         });
       }
+
+      // 3. Save merged records
+      for (const merged of mergedBillingRecords) {
+        const mergedRev = (merged.items || []).reduce((sum: number, i: any) => sum + (i.price * i.quantity), 0);
+        
+        // Find owner name for merged records
+        const queueItem = opdQueue.find(q => q.patientId === merged.patientId);
+        
+        await addDoc(collection(db, 'opd_records'), {
+          patientId: merged.patientId,
+          petName: merged.petName,
+          ownerName: queueItem?.ownerName || '',
+          category: 'Treatment',
+          finalDiagnosis: `Billing merged with ${newRecord.petName}`,
+          revenue: mergedRev,
+          items: merged.items,
+          status: 'Completed',
+          billingStatus: mergedRev > 0 ? 'unpaid' : 'none',
+          dateVisit: serverTimestamp(),
+          createdAt: serverTimestamp()
+        });
+
+        // Update queue item for merged patient if still in queue
+        if (queueItem) {
+          await updateDoc(doc(db, 'appointments', queueItem.id), { status: 'Completed' });
+        }
+      }
+
+      // Reset state
       setIsAddingRecord(false);
       setEditingRecordId(null);
       setActiveStep(1);
       setPastRecords([]);
+      setMergedBillingRecords([]);
+      setTargetPetId('');
       setNewRecord({
         patientId: '',
         petName: '',
         category: 'Treatment',
+        isFollowUp: false,
         finalDiagnosis: '',
         status: 'Completed',
         attachments: [],
@@ -309,8 +526,13 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
         vitals: { weight: '', temp: '', heartRate: '', respiratoryRate: '' },
         treatmentTx: '',
         recipereRx: '',
+        physicalExaminationPe: '',
         plan: '',
-        clientEducation: ''
+        clientEducation: '',
+        groomingSize: 'Small',
+        groomingTreatment: false,
+        groomingNotes: '',
+        serviceCharge: 0
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'opd_records');
@@ -333,12 +555,17 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
         vitals: { weight: '', temp: '', heartRate: '', respiratoryRate: '' },
         treatmentTx: '',
         recipereRx: '',
+        physicalExaminationPe: '',
         plan: '',
         clientEducation: '',
         chiefComplaint: '',
         historyTaking: '',
         problemList: '',
         typeOfFood: '',
+        isFollowUp: false,
+        groomingSize: 'Small',
+        groomingTreatment: false,
+        groomingNotes: '',
         dateVisit: serverTimestamp(),
         createdAt: serverTimestamp()
       });
@@ -359,8 +586,12 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
         vitals: { weight: '', temp: '', heartRate: '', respiratoryRate: '' },
         treatmentTx: '',
         recipereRx: '',
+        physicalExaminationPe: '',
         plan: '',
-        clientEducation: ''
+        clientEducation: '',
+        groomingSize: 'Small',
+        groomingTreatment: false,
+        groomingNotes: ''
       });
       fetchPastRecords(item.patientId);
       setIsAddingRecord(true);
@@ -380,15 +611,21 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
       status: record.status,
       attachments: record.attachments || [],
       items: record.items || [],
+      isFollowUp: record.isFollowUp || false,
       vitals: record.vitals || { weight: '', temp: '', heartRate: '', respiratoryRate: '' },
       treatmentTx: record.treatmentTx || '',
       recipereRx: record.recipereRx || '',
+      physicalExaminationPe: record.physicalExaminationPe || '',
       plan: record.plan || '',
       clientEducation: record.clientEducation || '',
       chiefComplaint: record.chiefComplaint || '',
       historyTaking: record.historyTaking || '',
       problemList: record.problemList || '',
-      typeOfFood: record.typeOfFood || ''
+      typeOfFood: record.typeOfFood || '',
+      groomingSize: record.groomingSize || 'Small',
+      groomingTreatment: record.groomingTreatment || false,
+      groomingNotes: record.groomingNotes || '',
+      serviceCharge: (record as any).serviceCharge || 0
     });
     fetchPastRecords(record.patientId);
     setIsAddingRecord(true);
@@ -409,19 +646,68 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
   };
 
   const addItem = () => {
-    if (!newItem.name || newItem.price <= 0) return;
-    setNewRecord(prev => ({
-      ...prev,
-      items: [...prev.items, { ...newItem, id: crypto.randomUUID() }]
-    }));
-    setNewItem({ name: '', quantity: 1, price: 0, category: 'Medicine', type: 'Oral' });
+    if (!newItem.name) return;
+    const itemToAdd = { ...newItem, id: crypto.randomUUID(), price: newItem.price || 0, petId: targetPetId };
+
+    if (targetPetId === newRecord.patientId) {
+      setNewRecord((prev: any) => ({
+        ...prev,
+        items: [...(prev.items || []), itemToAdd]
+      }));
+    } else {
+      setMergedBillingRecords(prev => prev.map(r => 
+        r.patientId === targetPetId 
+          ? { ...r, items: [...(r.items || []), itemToAdd] }
+          : r
+      ));
+    }
+
+    setNewItem({ 
+      name: '', 
+      quantity: 1, 
+      price: 0, 
+      category: 'Medicine', 
+      type: 'Oral',
+      usageMethod: 'กิน',
+      unit: 'เม็ด',
+      usageLocation: '',
+      dosage: '1',
+      timingMeal: 'After',
+      timingDetail: '',
+      frequency: {
+        morning: true,
+        noon: true,
+        evening: true,
+        bedtime: false
+      },
+      onCondition: false,
+      refrigerate: false,
+      shake: false,
+      purpose: ''
+    });
   };
 
-  const removeItem = (id: string) => {
-    setNewRecord(prev => ({
+  const editItem = (item: any) => {
+    setNewItem({ ...item });
+    setNewRecord((prev: any) => ({
       ...prev,
-      items: prev.items.filter(item => item.id !== id)
+      items: prev.items.filter((i: any) => i.id !== item.id)
     }));
+  };
+
+  const removeItem = (id: string, petId: string) => {
+    if (petId === newRecord.patientId) {
+      setNewRecord((prev: any) => ({
+        ...prev,
+        items: prev.items.filter((item: any) => item.id !== id)
+      }));
+    } else {
+      setMergedBillingRecords(prev => prev.map(r => 
+        r.patientId === petId 
+          ? { ...r, items: (r.items || []).filter((item: any) => item.id !== id) }
+          : r
+      ));
+    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -707,7 +993,17 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                     <td className="px-8 py-4 font-medium text-slate-600">
                       {format(record.dateVisit?.toDate ? record.dateVisit.toDate() : new Date(record.dateVisit), 'dd/MM/yyyy HH:mm')}
                     </td>
-                    <td className="px-8 py-4 font-bold text-slate-900">{record.petName}</td>
+                    <td className="px-8 py-4 font-bold text-slate-900">
+                      <div className="flex items-center gap-2">
+                        {record.petName}
+                        {record.isFollowUp && (
+                          <span className="flex items-center gap-1 px-1.5 py-0.5 bg-violet-50 text-violet-600 rounded-md text-[9px] font-black uppercase tracking-tighter border border-violet-100">
+                            <History className="w-2.5 h-2.5" />
+                            Follow up
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-8 py-4">
                       <div className="flex items-center gap-2">
                         <span className={cn(
@@ -817,8 +1113,8 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
 
       {/* Add OPD Record Modal */}
       {isAddingRecord && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl overflow-hidden flex h-[90vh]">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center">
+          <div className="bg-white w-full h-full overflow-hidden flex">
             {/* Left: Form Column */}
             <div className="flex-1 flex flex-col overflow-hidden border-r border-slate-50">
               <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
@@ -895,7 +1191,7 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                   {activeStep === 1 && (
                     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                       <div className="space-y-1 relative" ref={petDropdownRef}>
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Select Patient *</label>
+                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Select Patient *</label>
                         <div className="relative">
                           <input 
                             type="text"
@@ -932,9 +1228,21 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                   }}
                                   className="w-full px-6 py-4 text-left hover:bg-slate-50 transition-colors border-b border-slate-50 last:border-0 group flex items-center justify-between"
                                 >
-                                  <div className="flex flex-col">
-                                    <span className="text-sm font-bold text-slate-800">{p.name}</span>
-                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">HN: {p.hn} • {p.ownerName}</span>
+                                  <div className="flex flex-col py-1">
+                                    <span className="text-xl font-black text-slate-900 leading-tight">{p.name}</span>
+                                    <div className="flex items-center gap-2 mt-1">
+                                      <span className={cn(
+                                        "px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-tighter",
+                                        p.species?.toLowerCase() === 'dog' ? "bg-amber-50 text-amber-600" : 
+                                        p.species?.toLowerCase() === 'cat' ? "bg-emerald-50 text-emerald-600" : 
+                                        "bg-slate-100 text-slate-500"
+                                      )}>
+                                        {p.species || 'Species'}
+                                      </span>
+                                      <span className="text-xs text-slate-500 font-bold uppercase tracking-widest leading-none">
+                                        HN: {p.hn} • <span className="text-[#00b4d8] font-black">Owner: {p.ownerName}</span>
+                                      </span>
+                                    </div>
                                   </div>
                                   <span className="opacity-0 group-hover:opacity-100 text-[10px] text-[#00b4d8] font-black uppercase tracking-widest">Select Patient</span>
                                 </button>
@@ -946,12 +1254,12 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
 
                       <div className="grid grid-cols-2 gap-6">
                         <div className="p-6 bg-sky-50/50 rounded-[2.5rem] border border-sky-100/50 space-y-6">
-                          <h4 className="text-[10px] font-black text-sky-600 uppercase tracking-widest flex items-center gap-2">
+                          <h4 className="text-xs font-black text-sky-600 uppercase tracking-widest flex items-center gap-2">
                             <Activity className="w-4 h-4" /> Vital Signs
                           </h4>
                           <div className="grid grid-cols-2 gap-6">
                             <div className="space-y-1.5 focus-within:translate-y-[-2px] transition-transform">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Weight (kg)</label>
+                              <label className="text-xs font-bold text-slate-400 uppercase ml-1">Weight (kg)</label>
                               <input 
                                 type="text" 
                                 value={newRecord.vitals.weight}
@@ -961,7 +1269,7 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                               />
                             </div>
                             <div className="space-y-1.5 focus-within:translate-y-[-2px] transition-transform">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Temp (°C)</label>
+                              <label className="text-xs font-bold text-slate-400 uppercase ml-1">Temp (°C)</label>
                               <input 
                                 type="text" 
                                 value={newRecord.vitals.temp}
@@ -974,23 +1282,107 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                         </div>
                         
                         <div className="space-y-3">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block ml-1">Visit Category</label>
-                          <div className="grid grid-cols-2 gap-3">
-                            {['Treatment', 'Grooming', 'Vaccine', 'Other'].map((cat) => (
-                              <button
-                                key={cat}
-                                type="button"
-                                onClick={() => setNewRecord({ ...newRecord, category: cat as any })}
-                                className={cn(
-                                  "px-4 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border",
-                                  newRecord.category === cat 
-                                    ? "bg-[#00b4d8] text-white border-[#00b4d8] shadow-xl shadow-cyan-100 scale-[1.02]" 
-                                    : "bg-slate-50 text-slate-400 border-slate-100 hover:bg-slate-100"
-                                )}
-                              >
-                                {cat}
-                              </button>
-                            ))}
+                          <label className="text-xs font-black text-slate-400 uppercase tracking-widest block ml-1 flex items-center justify-between">
+                            Visit Info
+                            {newRecord.isFollowUp && <span className="text-[10px] text-violet-500 lowercase tracking-normal font-bold flex items-center gap-1"><History className="w-3 h-3" /> รักษาต่อเนื่อง</span>}
+                          </label>
+                          <div className="p-2 bg-slate-50 border border-slate-100 rounded-[2.5rem] space-y-2">
+                            <div className="grid grid-cols-2 gap-2">
+                              {['Treatment', 'Grooming', 'Vaccine', 'Other'].map((cat) => (
+                                <button
+                                  key={cat}
+                                  type="button"
+                                  onClick={() => setNewRecord({ ...newRecord, category: cat as any })}
+                                  className={cn(
+                                    "px-4 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border",
+                                    newRecord.category === cat 
+                                      ? "bg-[#00b4d8] text-white border-[#00b4d8] shadow-lg shadow-cyan-100" 
+                                      : "bg-white text-slate-400 border-slate-100 hover:bg-slate-50"
+                                  )}
+                                >
+                                  {cat}
+                                </button>
+                              ))}
+                            </div>
+
+                            <AnimatePresence>
+                              {newRecord.category === 'Grooming' && (
+                                <motion.div 
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: 'auto', opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  className="overflow-hidden"
+                                >
+                                  <div className="p-4 bg-white border border-slate-100 rounded-2xl space-y-4 shadow-sm">
+                                    <div className="space-y-2">
+                                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block ml-1">Size Selection</label>
+                                      <div className="grid grid-cols-3 gap-2">
+                                        {['Small', 'Medium', 'Large'].map((size) => (
+                                          <button
+                                            key={size}
+                                            type="button"
+                                            onClick={() => setNewRecord({ ...newRecord, groomingSize: size as any })}
+                                            className={cn(
+                                              "px-2 py-2 rounded-xl text-[10px] font-black uppercase transition-all border",
+                                              newRecord.groomingSize === size 
+                                                ? "bg-amber-500 text-white border-amber-500 shadow-md" 
+                                                : "bg-slate-50 text-slate-400 border-slate-100 hover:bg-slate-100"
+                                            )}
+                                          >
+                                            {size}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center justify-between p-2 bg-slate-50 rounded-xl border border-slate-100">
+                                      <div className="flex items-center gap-2 px-2">
+                                        <div className={cn(
+                                          "w-4 h-4 rounded-md border-2 flex items-center justify-center transition-all",
+                                          newRecord.groomingTreatment ? "bg-emerald-500 border-emerald-500" : "bg-white border-slate-200"
+                                        )}>
+                                          {newRecord.groomingTreatment && <Check className="w-3 h-3 text-white" />}
+                                        </div>
+                                        <span className="text-[10px] font-black text-slate-600 uppercase tracking-wider">Treatment</span>
+                                      </div>
+                                      <button 
+                                        type="button"
+                                        onClick={() => setNewRecord({ ...newRecord, groomingTreatment: !newRecord.groomingTreatment })}
+                                        className="text-[9px] font-black text-emerald-600 uppercase bg-white px-3 py-1.5 rounded-lg border border-emerald-100 hover:bg-emerald-50 transition-colors"
+                                      >
+                                        {newRecord.groomingTreatment ? 'Enabled' : 'Click to Enable'}
+                                      </button>
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block ml-1">Notes (หมายเหตุ)</label>
+                                      <textarea 
+                                        value={newRecord.groomingNotes}
+                                        onChange={e => setNewRecord({...newRecord, groomingNotes: e.target.value})}
+                                        rows={2}
+                                        className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 text-[11px] font-medium focus:ring-4 focus:ring-amber-50 outline-none transition-all placeholder:text-slate-300"
+                                        placeholder="รายละเอียดเพิ่มเติมสำหรับการกรูมมิ่ง..."
+                                      />
+                                    </div>
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                            
+                            <button
+                              type="button"
+                              onClick={() => setNewRecord({ ...newRecord, isFollowUp: !newRecord.isFollowUp })}
+                              className={cn(
+                                "w-full px-4 py-4 rounded-3xl text-xs font-black uppercase tracking-widest transition-all border flex items-center justify-center gap-2",
+                                newRecord.isFollowUp 
+                                  ? "bg-violet-500 text-white border-violet-500 shadow-xl shadow-violet-100 scale-[1.02]" 
+                                  : "bg-white text-slate-400 border-slate-100 hover:bg-slate-50"
+                              )}
+                            >
+                              <History className="w-4 h-4" />
+                              รักษาต่อเนื่อง (Follow-up)
+                              {newRecord.isFollowUp && <Check className="w-4 h-4 ml-auto" />}
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -999,14 +1391,14 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                       <div className="space-y-6">
                         <div className="flex items-center gap-4">
                           <div className="h-[1px] flex-1 bg-slate-100" />
-                          <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Problem Oriented</h4>
+                          <h4 className="text-xs font-black text-slate-400 uppercase tracking-[0.3em]">Problem Oriented</h4>
                           <div className="h-[1px] flex-1 bg-slate-100" />
                         </div>
 
                         <div className="grid grid-cols-2 gap-6">
                           <div className="space-y-4">
                             <div className="space-y-1.5 group">
-                              <label className="text-[10px] font-black text-[#00b4d8] uppercase tracking-widest flex items-center gap-2 ml-1">
+                              <label className="text-xs font-black text-[#00b4d8] uppercase tracking-widest flex items-center gap-2 ml-1">
                                 <Activity className="w-3 h-3" /> Chief Complaint (CC)
                               </label>
                               <textarea 
@@ -1018,7 +1410,7 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                               />
                             </div>
                             <div className="space-y-1.5">
-                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 ml-1">
+                              <label className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 ml-1">
                                 <History className="w-3 h-3" /> History Taking (HT)
                               </label>
                               <textarea 
@@ -1076,10 +1468,24 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                   {activeStep === 2 && (
                     <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500 pb-8">
                       <div className="grid grid-cols-1 gap-6">
+                        {/* PE Section */}
+                        <div className="space-y-3">
+                          <label className="text-xs font-black text-indigo-500 uppercase tracking-widest flex items-center gap-2 ml-1">
+                            <Stethoscope className="w-3 h-3" /> Physical Examination: PE
+                          </label>
+                          <textarea 
+                            rows={2}
+                            value={newRecord.physicalExaminationPe}
+                            onChange={(e) => setNewRecord({ ...newRecord, physicalExaminationPe: e.target.value })}
+                            className="w-full px-6 py-4 rounded-2xl bg-indigo-50/30 border border-indigo-100/50 focus:ring-4 focus:ring-indigo-50 outline-none text-sm font-medium shadow-inner placeholder:text-slate-300"
+                            placeholder="ผลการตรวจร่างกายเบื้องต้น..."
+                          />
+                        </div>
+
                         {/* Treatment Section */}
                         <div className="space-y-3">
-                          <label className="text-[10px] font-black text-[#00b4d8] uppercase tracking-widest flex items-center gap-2 ml-1">
-                            <Activity className="w-3 h-3" /> Treatment: Tx
+                          <label className="text-xs font-black text-[#00b4d8] uppercase tracking-widest flex items-center gap-2 ml-1">
+                            <Activity className="w-3 h-3" /> Treatment: TX
                           </label>
                           <textarea 
                             rows={2}
@@ -1090,23 +1496,9 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                           />
                         </div>
 
-                        {/* Recipere Section */}
-                        <div className="space-y-3">
-                          <label className="text-[10px] font-black text-rose-500 uppercase tracking-widest flex items-center gap-2 ml-1">
-                            <Droplets className="w-3 h-3" /> Recipere: Rx
-                          </label>
-                          <textarea 
-                            rows={3}
-                            value={newRecord.recipereRx}
-                            onChange={(e) => setNewRecord({ ...newRecord, recipereRx: e.target.value })}
-                            className="w-full px-6 py-4 rounded-2xl bg-rose-50/30 border border-rose-100/50 focus:ring-4 focus:ring-rose-50 outline-none text-sm font-medium shadow-inner placeholder:text-slate-300 font-mono"
-                            placeholder="รายการยาและขนาดยา (e.g. Medicine 20mg PO SID * 7)..."
-                          />
-                        </div>
-
                         {/* Plan Section */}
                         <div className="space-y-3">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 ml-1">
+                          <label className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 ml-1">
                             <History className="w-3 h-3" /> Plan: แผนการรักษาต่อเนื่อง
                           </label>
                           <textarea 
@@ -1120,8 +1512,8 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
 
                         {/* Client Education Section */}
                         <div className="space-y-3">
-                          <label className="text-[10px] font-black text-emerald-500 uppercase tracking-widest flex items-center gap-2 ml-1">
-                            <Stethoscope className="w-3 h-3" /> Client Education: คำแนะนำสำหรับเจ้าของ
+                          <label className="text-xs font-black text-emerald-500 uppercase tracking-widest flex items-center gap-2 ml-1">
+                            <Check className="w-3 h-3" /> Client Education: คำแนะนำสำหรับเจ้าของ
                           </label>
                           <textarea 
                             rows={2}
@@ -1145,11 +1537,11 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                           type="button" 
                           onClick={() => {
                             // Synthesize finalDiagnosis for backward compatibility or display
-                            const combinedDiagnosis = `CC: ${newRecord.chiefComplaint}\nHT: ${newRecord.historyTaking}\nTx: ${newRecord.treatmentTx}\nRx: ${newRecord.recipereRx}\nPlan: ${newRecord.plan}\nEducation: ${newRecord.clientEducation}`;
+                            const combinedDiagnosis = `CC: ${newRecord.chiefComplaint}\nHT: ${newRecord.historyTaking}\nPE: ${newRecord.physicalExaminationPe}\nTx: ${newRecord.treatmentTx}\nRx: ${newRecord.recipereRx}\nPlan: ${newRecord.plan}\nEducation: ${newRecord.clientEducation}`;
                             setNewRecord({ ...newRecord, finalDiagnosis: combinedDiagnosis });
                             setActiveStep(3);
                           }}
-                          className="flex-[2] py-5 bg-[#00b4d8] text-white rounded-[2rem] font-black uppercase tracking-widest hover:bg-[#0096b1] transition-all shadow-2xl shadow-cyan-100 active:scale-95 transition-all"
+                          className="flex-[2] py-5 bg-[#00b4d8] text-white rounded-[2rem] font-black uppercase tracking-widest hover:bg-[#0096b1] transition-all shadow-2xl shadow-cyan-100 active:scale-95"
                         >
                           Next: Pharmacy & Billing
                         </button>
@@ -1160,30 +1552,87 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                   {activeStep === 3 && (
                     <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-500">
                       <div className="space-y-6">
+                        {/* RX Section in Step 3 */}
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-rose-500 uppercase tracking-widest flex items-center gap-2 ml-1">
+                            <Droplets className="w-3 h-3" /> Recipere: RX
+                          </label>
+                          <textarea 
+                            rows={2}
+                            value={newRecord.recipereRx}
+                            onChange={(e) => setNewRecord({ ...newRecord, recipereRx: e.target.value })}
+                            className="w-full px-6 py-4 rounded-2xl bg-rose-50/20 border border-rose-100/30 focus:ring-4 focus:ring-rose-50 outline-none text-sm font-medium shadow-inner placeholder:text-slate-300 font-mono"
+                            placeholder="รายการยาและขนาดยา (e.g. Medicine 20mg PO SID * 7)..."
+                          />
+                        </div>
+
                         <div className="flex items-center justify-between">
                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                              <Droplets className="w-3 h-3 text-emerald-500" /> Dispensing & Billing
                           </label>
-                          <div className="flex gap-2">
-                            {(['Oral', 'Injection', 'Service'] as const).map(t => (
-                              <button
-                                key={t}
-                                type="button"
-                                onClick={() => setNewItem({...newItem, type: t, category: t === 'Service' ? 'Service' : 'Medicine'})}
-                                className={cn(
-                                  "px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all border",
-                                  newItem.type === t 
-                                    ? "bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-100" 
-                                    : "bg-slate-50 text-slate-400 border-slate-100 hover:bg-slate-100"
-                                )}
-                              >
-                                {t}
-                              </button>
-                            ))}
+                          <div className="flex items-center gap-4">
+                            <button
+                              type="button"
+                              onClick={() => setShowMergeModal(true)}
+                              className="px-4 py-2 bg-sky-50 text-sky-600 rounded-xl text-[9px] font-black uppercase tracking-widest border border-sky-100 hover:bg-sky-100 transition-all flex items-center gap-2"
+                            >
+                              <Plus className="w-3 h-3" /> รวมบิล (Merge Bill)
+                            </button>
+                            <div className="flex gap-2">
+                              {(['Oral', 'Injection', 'Service'] as const).map(t => (
+                                <button
+                                  key={t}
+                                  type="button"
+                                  onClick={() => setNewItem({...newItem, type: t, category: t === 'Service' ? 'Service' : 'Medicine'})}
+                                  className={cn(
+                                    "px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all border",
+                                    newItem.type === t 
+                                      ? "bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-100" 
+                                      : "bg-slate-50 text-slate-400 border-slate-100 hover:bg-slate-100"
+                                  )}
+                                >
+                                  {t}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         </div>
                         
-                        <div className="p-8 bg-emerald-50/40 rounded-[2.5rem] border border-emerald-100/50 flex flex-col gap-4">
+                        <div className="p-8 bg-emerald-50/40 rounded-[2.5rem] border border-emerald-100/50 flex flex-col gap-6">
+                          {mergedBillingRecords.length > 0 && (
+                            <div className="flex flex-col gap-2">
+                              <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest ml-1">Select Target Pet</span>
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setTargetPetId(newRecord.patientId)}
+                                  className={cn(
+                                    "px-4 py-2 rounded-xl text-[10px] font-bold border transition-all",
+                                    targetPetId === newRecord.patientId ? "bg-emerald-500 text-white border-emerald-500" : "bg-white text-slate-400 border-slate-100"
+                                  )}
+                                >
+                                  {newRecord.petName} (Current)
+                                </button>
+                                {mergedBillingRecords.map(r => (
+                                  <div key={r.patientId} className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => setTargetPetId(r.patientId)}
+                                      className={cn(
+                                        "px-4 py-2 rounded-xl text-[10px] font-bold border transition-all",
+                                        targetPetId === r.patientId ? "bg-emerald-500 text-white border-emerald-500" : "bg-white text-slate-400 border-slate-100"
+                                      )}
+                                    >
+                                      {r.petName}
+                                    </button>
+                                    <button onClick={() => removeMergedRecord(r.patientId)} className="p-1.5 text-slate-300 hover:text-rose-500">
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                           <div className="flex gap-4">
                             <div className="flex-1 relative">
                               <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-300" />
@@ -1191,7 +1640,7 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                 type="text"
                                 placeholder={newItem.type === 'Oral' ? "Search Oral Medicine..." : (newItem.type === 'Injection' ? "Search Injection..." : "Search Service...") }
                                 value={newItem.name}
-                                onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
+                                onChange={(e) => setNewItem({ ...newItem, name: e.target.value, category: 'Medicine' })}
                                 className="w-full pl-12 pr-6 py-4 bg-white border-none rounded-2xl text-sm font-bold shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none"
                               />
                             </div>
@@ -1213,6 +1662,7 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                               />
                             </div>
                           </div>
+
                           <button 
                             type="button"
                             onClick={addItem}
@@ -1222,83 +1672,55 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                           </button>
                         </div>
 
-                        <div className="space-y-3 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
-                          {newRecord.items.map((itemValue: any) => (
-                            <div key={itemValue.id} className="flex items-center justify-between p-5 bg-white border border-slate-100 rounded-[1.5rem] shadow-sm group hover:border-emerald-200 transition-all">
-                              <div className="flex items-center gap-5">
-                                <div className={cn(
-                                  "w-12 h-12 rounded-[1rem] flex items-center justify-center transition-colors",
-                                  itemValue.type === 'Oral' ? "bg-amber-50 text-amber-500" : (itemValue.type === 'Injection' ? "bg-rose-50 text-rose-500" : "bg-sky-50 text-sky-500")
-                                )}>
-                                  {itemValue.type === 'Oral' ? <Activity className="w-6 h-6" /> : (itemValue.type === 'Injection' ? <Syringe className="w-6 h-6" /> : <Stethoscope className="w-6 h-6" />)}
+                        <div className="space-y-6 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                          {[
+                            { name: newRecord.petName, items: newRecord.items || [], patientId: newRecord.patientId },
+                            ...mergedBillingRecords
+                          ].map((pet) => (
+                            <div key={pet.patientId} className="space-y-3">
+                              {mergedBillingRecords.length > 0 && (
+                                <div className="flex items-center gap-2 px-2">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{pet.name}'s Items</span>
                                 </div>
-                                <div>
-                                  <div className="flex items-center gap-2">
-                                    <p className="text-sm font-bold text-slate-800">{itemValue.name}</p>
-                                    <span className={cn(
-                                      "text-[8px] font-black uppercase px-2 py-0.5 rounded-full border",
-                                      itemValue.type === 'Oral' ? "border-amber-200 text-amber-500" : (itemValue.type === 'Injection' ? "border-rose-200 text-rose-500" : "border-sky-200 text-sky-500")
-                                    )}>
-                                      {itemValue.type}
-                                    </span>
+                              )}
+                              <div className="space-y-3">
+                                {pet.items.map((itemValue: any) => (
+                                  <div key={itemValue.id} className="flex items-center justify-between p-5 bg-white border border-slate-100 rounded-[1.5rem] shadow-sm group hover:border-emerald-200 transition-all">
+                                    <div className="flex items-center gap-5 flex-1 cursor-pointer" onClick={() => editItem(itemValue)}>
+                                      <div className={cn(
+                                        "w-12 h-12 rounded-[1rem] flex items-center justify-center transition-colors",
+                                        itemValue.type === 'Oral' ? "bg-amber-50 text-amber-500" : (itemValue.type === 'Injection' ? "bg-rose-50 text-rose-500" : "bg-sky-50 text-sky-500")
+                                      )}>
+                                        {itemValue.type === 'Oral' ? <Activity className="w-6 h-6" /> : (itemValue.type === 'Injection' ? <Syringe className="w-6 h-6" /> : <Stethoscope className="w-6 h-6" />)}
+                                      </div>
+                                      <div>
+                                        <div className="flex items-center gap-2">
+                                          <p className="text-sm font-bold text-slate-800 group-hover:text-emerald-600 transition-colors">{itemValue.name}</p>
+                                          <span className={cn(
+                                            "text-[8px] font-black uppercase px-2 py-0.5 rounded-full border",
+                                            itemValue.type === 'Oral' ? "border-amber-200 text-amber-500" : (itemValue.type === 'Injection' ? "border-rose-200 text-rose-500" : "border-sky-200 text-sky-500")
+                                          )}>
+                                            {itemValue.type}
+                                          </span>
+                                        </div>
+                                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Qty: {itemValue.quantity} • {itemValue.price} THB each</p>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-6">
+                                      <span className="text-sm font-black text-slate-900">{(itemValue.price * itemValue.quantity).toLocaleString()} THB</span>
+                                      <div className="flex items-center gap-2">
+                                        <button 
+                                          type="button"
+                                          onClick={() => removeItem(itemValue.id, pet.patientId)}
+                                          className="p-2 text-slate-200 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
+                                        >
+                                          <Trash2 className="w-5 h-5" />
+                                        </button>
+                                      </div>
+                                    </div>
                                   </div>
-                                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Qty: {itemValue.quantity} • {itemValue.price} THB each</p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-6">
-                                <span className="text-sm font-black text-slate-900">{(itemValue.price * itemValue.quantity).toLocaleString()} THB</span>
-                                <div className="flex items-center gap-2">
-                                  {itemValue.type === 'Oral' && (
-                                    <button 
-                                      type="button"
-                                      onClick={() => {
-                                        const printWindow = window.open('', '_blank', 'width=400,height=300');
-                                        if (!printWindow) return;
-                                        printWindow.document.write(`
-                                          <html>
-                                            <head>
-                                              <style>
-                                                @page { size: 80mm 50mm; margin: 0; }
-                                                body { font-family: sans-serif; padding: 15px; }
-                                                .label { border: 2px solid #000; height: 100%; display: flex; flex-direction: column; border-radius: 8px; }
-                                                .header { font-weight: 900; background: #000; color: #fff; padding: 5px 10px; font-size: 14px; text-transform: uppercase; }
-                                                .content { padding: 10px; font-size: 12px; flex: 1; }
-                                                .pet { font-size: 16px; font-weight: bold; margin-bottom: 5px; }
-                                                .med { font-size: 14px; color: #333; margin-bottom: 10px; }
-                                                .footer { font-size: 10px; background: #f5f5f5; padding: 5px 10px; border-top: 1px solid #eee; text-align: right; }
-                                              </style>
-                                            </head>
-                                            <body>
-                                              <div class="label">
-                                                <div class="header">Prescription Label</div>
-                                                <div class="content">
-                                                  <div class="pet">Patient: ${newRecord.petName}</div>
-                                                  <div class="med">Medicine: ${itemValue.name}</div>
-                                                  <div class="instr">Qty: ${itemValue.quantity} Units</div>
-                                                  <div class="date">Date: ${format(new Date(), 'dd/MM/yyyy')}</div>
-                                                </div>
-                                                <div class="footer">ANIMAL BOX CLINIC</div>
-                                              </div>
-                                              <script>window.onload = () => { window.print(); window.close(); };</script>
-                                            </body>
-                                          </html>
-                                        `);
-                                        printWindow.document.close();
-                                      }}
-                                      className="p-2 bg-amber-50 text-amber-500 rounded-xl hover:bg-amber-100 transition-colors shadow-sm"
-                                      title="Print Medicine Label"
-                                    >
-                                      <Printer className="w-5 h-5" />
-                                    </button>
-                                  )}
-                                  <button 
-                                    type="button"
-                                    onClick={() => removeItem(itemValue.id)}
-                                    className="p-2 text-slate-200 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
-                                  >
-                                    <Trash2 className="w-5 h-5" />
-                                  </button>
-                                </div>
+                                ))}
                               </div>
                             </div>
                           ))}
@@ -1306,26 +1728,42 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                       </div>
 
                       <div className="flex items-center justify-between pt-6 border-t border-slate-100 mt-auto">
-                        <div className="flex flex-col">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">Estimated Total</span>
-                          <div className="flex items-baseline gap-2">
-                            <span className="text-4xl font-black text-slate-900 leading-none">
-                              {newRecord.items.reduce((sum: number, i: any) => sum + (i.price * i.quantity), 0).toLocaleString()}
-                            </span>
-                            <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">THB</span>
+                        <div className="flex gap-8">
+                          <div className="flex flex-col">
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">Estimated Total</span>
+                            <div className="flex items-baseline gap-2">
+                              <span className="text-4xl font-black text-slate-900 leading-none">
+                                {totalAmount.toLocaleString()}
+                              </span>
+                              <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">THB</span>
+                            </div>
+                          </div>
+                          
+                          <div className="flex flex-col">
+                            <span className="text-[10px] font-black text-rose-500 uppercase tracking-[0.2em] mb-1">Service Charge</span>
+                            <div className="flex items-center gap-2">
+                              <input 
+                                type="number"
+                                value={newRecord.serviceCharge || ''}
+                                onChange={(e) => setNewRecord({...newRecord, serviceCharge: Number(e.target.value)})}
+                                placeholder="0"
+                                className="w-24 px-4 py-2 bg-rose-50 border border-rose-100 rounded-xl text-lg font-black text-rose-600 outline-none focus:ring-2 focus:ring-rose-400"
+                              />
+                              <span className="text-xs font-bold text-rose-300">THB</span>
+                            </div>
                           </div>
                         </div>
                         <div className="flex gap-4">
                           <button 
                             type="button" 
                             onClick={() => setActiveStep(2)}
-                            className="px-8 py-5 bg-slate-100 text-slate-500 rounded-[2rem] font-black uppercase tracking-widest hover:bg-slate-200 transition-all"
+                            className="px-8 py-5 bg-slate-100 text-slate-500 rounded-[2rem] font-black uppercase tracking-widest hover:bg-slate-200 transition-all font-sans"
                           >
                             Back
                           </button>
                           <button 
                             type="submit"
-                            className="px-12 py-5 bg-emerald-500 text-white rounded-[2rem] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-2xl shadow-emerald-100 flex items-center gap-3 active:scale-95"
+                            className="px-12 py-5 bg-emerald-500 text-white rounded-[2rem] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-2xl shadow-emerald-100 flex items-center gap-3 active:scale-95 transition-all"
                           >
                             <Save className="w-5 h-5" /> Complete Visit
                           </button>
@@ -1342,7 +1780,7 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
               {/* TOP: Patient Info Header */}
               <div className="p-8 border-b border-slate-50 bg-slate-50/30">
                 <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
                     <PawPrint className="w-4 h-4" /> Patient Summary
                   </h3>
                 </div>
@@ -1378,44 +1816,319 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                 )}
               </div>
 
-              {/* MIDDLE: Current Dispensing Section (The Top Red Box in your image) */}
-              <div className="flex-none p-8 bg-white border-b border-slate-50">
-                <h3 className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.2em] flex items-center gap-2 mb-6">
-                  <Syringe className="w-4 h-4" /> Current Pharmacy Selection
+              <div className="flex-none p-8 bg-white border-b border-slate-50 flex flex-col overflow-hidden max-h-[750px]">
+                <h3 className="text-xs font-black text-emerald-500 uppercase tracking-[0.2em] flex items-center gap-2 mb-6">
+                  <Syringe className="w-4 h-4" /> Pharmacy Management
                 </h3>
-                
-                <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                  {newRecord.items.length > 0 ? (
-                    newRecord.items.map((item: any) => (
-                      <div key={item.id} className="flex items-center justify-between p-4 bg-emerald-50/30 border border-emerald-100/30 rounded-2xl group transition-all hover:bg-emerald-50">
-                        <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-emerald-400 shadow-sm">
-                            <Activity className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <p className="text-[11px] font-black text-slate-800">{item.name}</p>
-                            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Qty: {item.quantity}</p>
-                          </div>
+
+                <div className="mb-6">
+                  <div className="relative group">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 group-focus-within:text-emerald-500 transition-colors" />
+                    <input 
+                      type="text"
+                      value={newItem.name}
+                      onChange={e => {
+                        const val = e.target.value;
+                        const updates: any = { name: val, category: 'Medicine' };
+                        if (val.includes('ทำแผล')) {
+                          updates.usageMethod = 'ทำแผล';
+                          updates.woundCare = true;
+                        }
+                        setNewItem({...newItem, ...updates});
+                      }}
+                      className="w-full bg-slate-50 rounded-2xl border-none pl-12 pr-4 py-4 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-100 transition-all shadow-inner"
+                      placeholder="Search medication name..."
+                    />
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-6">
+                  {/* Detailed Drug Label Form */}
+                  {newItem.name && (
+                    <div className="p-6 bg-emerald-50/20 rounded-[2rem] border border-emerald-100/50 space-y-6 animate-in fade-in zoom-in-95 duration-300 shadow-sm">
+                      <div className="flex items-center justify-between mb-6 bg-emerald-50/50 p-4 rounded-[1.5rem] border border-emerald-100 flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <input type="checkbox" id="drug-label-setting-sidebar-check" defaultChecked className="w-4 h-4 text-emerald-500 rounded border-slate-300" />
+                          <label htmlFor="drug-label-setting-sidebar-check" className="text-xs font-black text-emerald-600 uppercase tracking-[0.2em] whitespace-nowrap">Drug Label Setting</label>
                         </div>
-                        <div className="text-right">
-                          <p className="text-[11px] font-black text-slate-900">{(item.price * item.quantity).toLocaleString()}</p>
-                          <p className="text-[8px] font-bold text-slate-300">THB</p>
-                        </div>
+                        
+                        <label className="cursor-pointer bg-white px-3 py-1.5 rounded-xl border border-emerald-200 text-[10px] font-black text-emerald-600 hover:bg-emerald-50 transition-all shadow-sm active:scale-95 flex items-center gap-2">
+                          <Upload className="w-3 h-3 text-emerald-500" />
+                          <span>นำเข้า SVG</span>
+                          <input 
+                            type="file" 
+                            accept=".svg" 
+                            className="hidden" 
+                            onChange={handleSvgImport}
+                          />
+                        </label>
                       </div>
-                    ))
-                  ) : (
-                    <div className="py-12 bg-slate-50/50 rounded-3xl border border-dashed border-slate-100 flex flex-col items-center justify-center gap-3 text-slate-300">
-                      <Droplets className="w-6 h-6 opacity-20" />
-                      <span className="text-[10px] font-black uppercase tracking-[0.1em]">No medications added</span>
+
+                      <div className="space-y-4">
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">วิธีการใช้</span>
+                          <select 
+                            value={newItem.usageMethod}
+                            onChange={e => setNewItem({...newItem, usageMethod: e.target.value})}
+                            className="w-full bg-white rounded-xl border border-emerald-100 px-4 py-2.5 text-sm font-bold shadow-sm outline-none"
+                          >
+                            {['กิน', 'ทา', 'หยอดหู', 'หยอดตา', 'พ่น', 'สวน', 'ล้างหู', 'ทำแผล'].map(m => (
+                              <option key={m} value={m}>{m}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="space-y-4 relative">
+                          <div className="flex items-center justify-between">
+                            <div className="flex flex-col">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Anatomical Marker (ระบุตำแหน่งบนตัวสัตว์)</span>
+                              <span className="text-[9px] text-emerald-500 font-medium">จิ้มที่อวัยวะหรือส่วนต่างๆ เพื่อระบุตำแหน่ง</span>
+                            </div>
+                            <button 
+                              type="button"
+                              onClick={() => setNewItem({...newItem, usageLocation: ''})}
+                              className="text-[9px] font-bold text-rose-500 uppercase px-3 py-1.5 bg-rose-50 rounded-xl hover:bg-rose-100 transition-all border border-rose-100"
+                            >
+                              รีเซ็ตตำแหน่ง
+                            </button>
+                          </div>
+                          
+                          <div 
+                            className="relative aspect-[4/3] bg-white rounded-[2.5rem] border border-emerald-100 group shadow-2xl overflow-hidden cursor-zoom-in"
+                            onClick={() => setIsAnatomyZoomed(true)}
+                          >
+                            <div className="absolute inset-0 pointer-events-none group-hover:bg-black/5 transition-colors z-0" />
+                            <AnatomyMap 
+                              onSelect={(loc) => {
+                                const currentParts = newItem.anatomicalParts || [];
+                                const index = currentParts.findIndex(l => l.toLowerCase() === loc.toLowerCase());
+                                let nextParts;
+                                if (index > -1) {
+                                  nextParts = currentParts.filter((_, i) => i !== index);
+                                } else {
+                                  nextParts = [...currentParts, loc];
+                                }
+                                setNewItem({...newItem, anatomicalParts: nextParts});
+                              }} 
+                              selectedLocations={newItem.anatomicalParts || []}
+                              customSvg={customAnatomySvg}
+                            />
+                            
+                            {/* Expand Icon */}
+                            <div className="absolute top-6 right-6 w-10 h-10 bg-white/90 backdrop-blur-xl rounded-2xl border border-emerald-100 shadow-xl flex items-center justify-center text-emerald-500 opacity-0 group-hover:opacity-100 transition-all transform scale-90 group-hover:scale-100 z-10">
+                              <Maximize2 className="w-5 h-5" />
+                            </div>
+
+                            {/* Floating Selection Badge */}
+                            <div className="absolute top-6 left-6 bg-white/95 backdrop-blur-xl px-5 py-3 rounded-[1.5rem] border border-emerald-100 shadow-xl flex flex-col gap-0.5 z-10">
+                              <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] leading-none">ตำแหน่งที่เลือก</span>
+                              <input 
+                                className="text-sm font-black text-emerald-600 bg-transparent border-none outline-none p-0 w-full min-w-[150px] focus:ring-0"
+                                value={newItem.usageLocation || ''}
+                                onChange={(e) => setNewItem({...newItem, usageLocation: e.target.value})}
+                                placeholder="คลี่กเลือกหรือพิมพ์..."
+                              />
+                            </div>
+
+                            <div className="absolute bottom-6 right-6 pointer-events-none">
+                              <div className="bg-emerald-500/10 backdrop-blur-md p-3 rounded-2xl border border-emerald-500/20 flex flex-col items-end gap-1">
+                                <span className="text-[8px] font-bold text-emerald-600 uppercase">Interactive System Map</span>
+                                <div className="flex gap-1">
+                                  {[1,2,3].map(i => <div key={i} className="w-1 h-1 rounded-full bg-emerald-500" />)}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="bg-slate-50/50 p-4 rounded-[2rem] border border-slate-100 space-y-3">
+                            <div className="flex items-center justify-between px-1">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">แมนนวล: ระบุตำแหน่งเอง</span>
+                              <div className="flex gap-2">
+                                <button 
+                                  type="button"
+                                  onClick={() => setNewItem({...newItem, usageLocation: 'ทางเดินหู'})}
+                                  className="text-[9px] font-bold text-slate-600 bg-white px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-100"
+                                >
+                                  Ear Canal
+                                </button>
+                                <button 
+                                  type="button"
+                                  onClick={() => setNewItem({...newItem, usageLocation: 'ผิวหนังชั้นนอก'})}
+                                  className="text-[9px] font-bold text-slate-600 bg-white px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-100"
+                                >
+                                  Skin
+                                </button>
+                              </div>
+                            </div>
+                            <div className="relative group">
+                              <input 
+                                type="text"
+                                value={newItem.usageLocation}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  const organNames = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                                  
+                                  const allPartsSet = new Set<string>();
+                                  organNames.forEach(name => {
+                                    if (anatomicalMappings[name]) {
+                                      anatomicalMappings[name].forEach(p => allPartsSet.add(p));
+                                    }
+                                  });
+
+                                  setNewItem({
+                                    ...newItem, 
+                                    usageLocation: val,
+                                    anatomicalParts: allPartsSet.size > 0 ? Array.from(allPartsSet) : newItem.anatomicalParts
+                                  });
+                                }}
+                                className="w-full bg-white rounded-2xl border border-emerald-100 px-5 py-3 text-sm outline-none shadow-sm font-bold group-hover:border-emerald-300 transition-all focus:ring-4 focus:ring-emerald-500/10"
+                                placeholder="พิมพ์ระบุตำแหน่ง เช่น ตาซ้าย, กระดูกสันหลังส่วนอก..."
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">ปริมาณ/ครั้ง</span>
+                          <div className="flex gap-2">
+                            <div className="flex items-center bg-white rounded-xl border border-emerald-100 overflow-hidden shadow-sm">
+                              <button type="button" onClick={() => setNewItem({...newItem, dosage: String(Math.max(0, Number(newItem.dosage) - 0.5))})} className="p-2.5 hover:bg-slate-50 text-slate-400"><Minus className="w-3 h-3" /></button>
+                              <input type="text" value={newItem.dosage} onChange={e => setNewItem({...newItem, dosage: e.target.value})} className="w-10 text-center text-xs font-black border-none outline-none" />
+                              <button type="button" onClick={() => setNewItem({...newItem, dosage: String(Number(newItem.dosage) + 0.5)})} className="p-2.5 hover:bg-slate-50 text-slate-400"><Plus className="w-3 h-3" /></button>
+                            </div>
+                            <select 
+                              value={newItem.unit}
+                              onChange={e => setNewItem({...newItem, unit: e.target.value})}
+                              className="flex-1 bg-white rounded-xl border border-emerald-100 px-3 py-2.5 text-xs font-bold shadow-sm"
+                            >
+                              {['เม็ด', 'มิลลิลิตร', 'แคปซูล', 'ช้อนชา', 'หยด'].map(u => (
+                                <option key={u} value={u}>{u}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        {!newItem.woundCare && (
+                          <>
+                            <div className="space-y-2 pt-2">
+                              <span className="text-xs font-black text-slate-400 uppercase tracking-widest">เวลา</span>
+                              {['Before', 'After', 'With'].map(m => (
+                                <div key={m} className={cn(
+                                  "p-3 rounded-2xl transition-all border",
+                                  newItem.timingMeal === m ? "bg-white border-emerald-200 shadow-xl shadow-emerald-50/50" : "bg-transparent border-transparent"
+                                )}>
+                                  <div className="flex items-center gap-3">
+                                    <input type="radio" checked={newItem.timingMeal === m} onChange={() => setNewItem({...newItem, timingMeal: m as any})} className="w-4 h-4 text-emerald-500 shadow-sm" />
+                                    <span className="text-xs font-black text-slate-700 uppercase">{m} Meals</span>
+                                    {newItem.timingMeal === m && (
+                                      <input type="text" value={newItem.timingDetail} onChange={e => setNewItem({...newItem, timingDetail: e.target.value})} className="flex-1 bg-slate-50 rounded-lg border-none px-2 py-1 text-[9px] font-bold outline-none" placeholder="คำอธิบาย..." />
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              {['morning', 'noon', 'evening', 'bedtime'].map(f => (
+                                <button
+                                  key={f}
+                                  type="button"
+                                  onClick={() => setNewItem({...newItem, frequency: {...newItem.frequency!, [f]: !newItem.frequency![f as keyof typeof newItem.frequency]}})}
+                                  className={cn(
+                                    "py-3 rounded-xl text-sm font-bold border transition-all shadow-sm",
+                                    newItem.frequency?.[f as keyof typeof newItem.frequency] ? "bg-sky-500 text-white border-sky-500 shadow-lg shadow-sky-100" : "bg-white text-slate-300 border-slate-100"
+                                  )}
+                                >
+                                  {f === 'morning' ? 'เช้า' : f === 'noon' ? 'กลางวัน' : f === 'evening' ? 'เย็น' : 'ก่อนนอน'}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+
+                        <div className="p-4 bg-white/50 rounded-2xl border border-emerald-50 flex flex-col gap-2">
+                          <label className="flex items-center gap-3"><input type="checkbox" checked={newItem.refrigerate} onChange={e => setNewItem({...newItem, refrigerate: e.target.checked})} className="w-5 h-5 text-sky-500 rounded border-slate-200" /><span className="text-xs font-black text-sky-600 uppercase tracking-widest">เก็บในตู้เย็น</span></label>
+                          <label className="flex items-center gap-3"><input type="checkbox" checked={newItem.shake} onChange={e => setNewItem({...newItem, shake: e.target.checked})} className="w-5 h-5 text-[#00b4d8] rounded border-slate-200" /><span className="text-xs font-black text-[#00b4d8] uppercase tracking-widest">เขย่าก่อนใช้</span></label>
+                          <label className="flex items-center gap-3 pt-2 border-t border-emerald-50"><input type="checkbox" checked={newItem.onCondition} onChange={e => setNewItem({...newItem, onCondition: e.target.checked})} className="w-5 h-5 text-emerald-500 rounded border-slate-200" /><span className="text-xs font-black text-emerald-600 uppercase tracking-widest">เมื่อมีอาการ</span></label>
+                          
+                          <div className="pt-2 border-t border-emerald-50 space-y-3">
+                            <label className="flex items-center gap-3">
+                              <input 
+                                type="checkbox" 
+                                checked={newItem.woundCare} 
+                                onChange={e => setNewItem({...newItem, woundCare: e.target.checked})} 
+                                className="w-5 h-5 text-rose-500 rounded border-slate-200" 
+                              />
+                              <span className="text-xs font-black text-rose-600 uppercase tracking-widest">ทำแผล</span>
+                            </label>
+                            {newItem.woundCare && (
+                              <input 
+                                type="text"
+                                value={newItem.woundCareDescription}
+                                onChange={e => setNewItem({...newItem, woundCareDescription: e.target.value})}
+                                placeholder="รายละเอียดการทำแผล..."
+                                className="w-full bg-rose-50/50 rounded-xl border border-rose-100 px-4 py-2 text-xs font-bold shadow-sm outline-none placeholder:text-rose-300 text-rose-700"
+                              />
+                            )}
+                          </div>
+                        </div>
+
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            addItem();
+                          }}
+                          className="w-full bg-emerald-500 text-white py-5 rounded-2xl text-xs font-black uppercase tracking-[0.2em] shadow-2xl shadow-emerald-100 hover:bg-emerald-600 transition-all active:scale-95"
+                        >
+                          Confirm & Add Medication
+                        </button>
+                      </div>
                     </div>
                   )}
+
+                  <div className="space-y-6">
+                    {[
+                      { name: newRecord.petName, items: (newRecord.items || []), patientId: newRecord.patientId },
+                      ...mergedBillingRecords
+                    ].map((pet) => (
+                      <div key={pet.patientId} className="space-y-3">
+                        {mergedBillingRecords.length > 0 && pet.items.length > 0 && (
+                          <div className="flex items-center gap-2 px-2">
+                             <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                             <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{pet.name}'s Items</span>
+                          </div>
+                        )}
+                        <div className="space-y-2">
+                          {pet.items.map((item: any) => (
+                            <div key={item.id} className="flex items-center justify-between p-4 bg-emerald-50/10 border border-emerald-100/30 rounded-2xl shadow-sm hover:bg-emerald-50 transition-colors group">
+                                <div className="flex items-center gap-3 flex-1 cursor-pointer" onClick={() => editItem(item)}>
+                                  <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center text-emerald-500 font-black text-xs shadow-sm">{item.quantity}</div>
+                                  <div className="flex flex-col">
+                                    <span className="text-sm font-black text-slate-800 group-hover:text-emerald-600 transition-colors">{item.name}</span>
+                                    <span className="text-[11px] font-bold text-slate-400 capitalize">{item.usageMethod} • {item.dosage} {item.unit}</span>
+                                  </div>
+                                </div>
+                                <button type="button" onClick={() => removeItem(item.id, pet.patientId)} className="p-2 text-slate-300 hover:text-rose-500 transition-colors"><X className="w-4 h-4" /></button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+
+                    {newRecord.items.length === 0 && mergedBillingRecords.length === 0 && !newItem.name && (
+                      <div className="py-20 bg-slate-50/20 rounded-[2.5rem] border-2 border-dashed border-slate-100 flex flex-col items-center justify-center gap-3 text-slate-300">
+                        <Droplets className="w-8 h-8 opacity-20" />
+                        <span className="text-xs font-black uppercase tracking-widest">Type Med Name to Start</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {newRecord.items.length > 0 && (
-                  <div className="mt-4 pt-4 border-t border-slate-50 flex items-center justify-between bg-white">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Running Total</span>
+                  <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between">
+                    <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Total BILL</span>
                     <span className="text-lg font-black text-slate-900">
-                      {newRecord.items.reduce((sum: number, i: any) => sum + (i.price * i.quantity), 0).toLocaleString()} <span className="text-[10px] text-slate-300">THB</span>
+                      {totalAmount.toLocaleString()} <span className="text-xs text-slate-300">THB</span>
                     </span>
                   </div>
                 )}
@@ -1487,6 +2200,34 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                        <p className="text-xs font-black text-slate-800 leading-relaxed">{rec.chiefComplaint}</p>
                                      </div>
                                    )}
+                                   {rec.historyTaking && (
+                                     <div className="bg-slate-50/50 p-4 rounded-2xl border border-slate-100/50">
+                                       <span className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] block mb-1.5">HT: History Taking</span>
+                                       <p className="text-xs font-medium text-slate-600 leading-relaxed">{rec.historyTaking}</p>
+                                     </div>
+                                   )}
+                                   {rec.vitals && (rec.vitals.weight || rec.vitals.temp) && (
+                                     <div className="flex gap-2">
+                                       {rec.vitals.weight && (
+                                         <div className="flex-1 bg-sky-50/30 p-3 rounded-xl border border-sky-100/30 flex flex-col">
+                                           <span className="text-[7px] font-black text-sky-600 uppercase">Weight</span>
+                                           <span className="text-sm font-black text-slate-800">{rec.vitals.weight} <small className="text-[8px]">kg</small></span>
+                                         </div>
+                                       )}
+                                       {rec.vitals.temp && (
+                                         <div className="flex-1 bg-orange-50/30 p-3 rounded-xl border border-orange-100/30 flex flex-col">
+                                           <span className="text-[7px] font-black text-orange-600 uppercase">Temp</span>
+                                           <span className="text-sm font-black text-slate-800">{rec.vitals.temp} <small className="text-[8px]">°C</small></span>
+                                         </div>
+                                       )}
+                                     </div>
+                                   )}
+                                   {rec.physicalExaminationPe && (
+                                     <div className="bg-indigo-50/30 p-4 rounded-2xl border border-indigo-100/30">
+                                       <span className="text-[8px] font-black text-indigo-600 uppercase tracking-[0.2em] block mb-1.5">PE: Physical Examination</span>
+                                       <p className="text-xs font-bold text-slate-700 leading-relaxed">{rec.physicalExaminationPe}</p>
+                                     </div>
+                                   )}
                                    {rec.treatmentTx && (
                                      <div className="bg-slate-50/50 p-4 rounded-2xl border border-slate-100/50">
                                        <span className="text-[8px] font-black text-[#00b4d8] uppercase tracking-[0.2em] block mb-1.5">Tx: Treatment</span>
@@ -1499,7 +2240,19 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                        <p className="text-xs font-medium text-slate-500 leading-relaxed italic">{rec.recipereRx}</p>
                                      </div>
                                    )}
-                                   {!rec.treatmentTx && !rec.recipereRx && (
+                                   {rec.plan && (
+                                     <div className="bg-slate-50/30 p-4 rounded-2xl border border-dashed border-slate-200">
+                                       <span className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] block mb-1.5">Plan</span>
+                                       <p className="text-xs font-medium text-slate-500 leading-relaxed">{rec.plan}</p>
+                                     </div>
+                                   )}
+                                   {rec.clientEducation && (
+                                     <div className="bg-emerald-50/20 p-4 rounded-2xl border border-emerald-100/20">
+                                       <span className="text-[8px] font-black text-emerald-600 uppercase tracking-[0.2em] block mb-1.5">Home Care</span>
+                                       <p className="text-xs font-medium text-slate-600 leading-relaxed">{rec.clientEducation}</p>
+                                     </div>
+                                   )}
+                                   {!rec.treatmentTx && !rec.recipereRx && !rec.chiefComplaint && (
                                      <p className="text-xs font-bold text-slate-700 leading-relaxed">
                                        {rec.finalDiagnosis}
                                      </p>
@@ -1654,6 +2407,270 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                 >
                   Delete
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Merge Bill Modal */}
+      <AnimatePresence>
+        {showMergeModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowMergeModal(false)}
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-lg bg-white rounded-[2.5rem] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8 border-b border-slate-50 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-black text-slate-800">เลือกสัตว์ที่ต้องการรวมบิล</h3>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Select patient to merge billing</p>
+                </div>
+                <button onClick={() => setShowMergeModal(false)} className="p-2 hover:bg-slate-50 rounded-xl text-slate-400">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="p-8 space-y-6">
+                <div className="relative">
+                  <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                  <input 
+                    type="text"
+                    placeholder="Search patient name..."
+                    value={mergeSearchQuery}
+                    onChange={(e) => setMergeSearchQuery(e.target.value)}
+                    className="w-full pl-12 pr-6 py-4 bg-slate-50 border-none rounded-2xl text-sm font-bold shadow-inner focus:ring-2 focus:ring-sky-400 outline-none"
+                  />
+                </div>
+                
+                <div className="space-y-2 max-h-[350px] overflow-y-auto pr-2 custom-scrollbar">
+                  {availableMergePatients
+                    .filter(p => !mergeSearchQuery || p.patientName.toLowerCase().includes(mergeSearchQuery.toLowerCase()))
+                    .map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => handleMergePatient(item)}
+                        className="w-full flex items-center gap-4 p-4 hover:bg-sky-50/50 rounded-2xl transition-all border border-transparent hover:border-sky-100 group text-left"
+                      >
+                        <div className="w-12 h-12 bg-white rounded-xl shadow-sm border border-slate-100 flex items-center justify-center text-sky-500 group-hover:scale-110 transition-transform">
+                          <PawPrint className="w-6 h-6" />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-black text-slate-800">{item.patientName}</p>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.ownerName}</p>
+                        </div>
+                        <Plus className="w-5 h-5 text-slate-200 group-hover:text-sky-500" />
+                      </button>
+                    ))}
+                  {availableMergePatients.length === 0 && (
+                    <div className="text-center py-12">
+                      <p className="text-sm font-bold text-slate-400">No other patients in queue</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Anatomy Zoom Modal */}
+      <AnimatePresence>
+        {isAnatomyZoomed && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 md:p-12">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsAnatomyZoomed(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-[95vw] h-[90vh] max-w-7xl bg-white rounded-[3rem] shadow-2xl border border-white/50 overflow-hidden flex flex-col"
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between p-8 border-b border-slate-100">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center">
+                    <Maximize2 className="w-6 h-6 text-emerald-600" />
+                  </div>
+                  <div className="flex flex-col">
+                    <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Interactive Anatomical Map</h3>
+                    <p className="text-xs font-bold text-slate-400">คลิกที่อวัยวะเพื่อระบุตำแหน่งที่ต้องการ</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsAnatomyZoomed(false)}
+                  className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 hover:bg-rose-50 hover:text-rose-500 transition-all hover:rotate-90"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              {/* Modal Body - Large Map */}
+              <div className="flex-1 bg-slate-50/30 relative overflow-hidden">
+                {/* Fixed Navigation Buttons on the Left (Outside scroll area) */}
+                <div className="absolute left-8 top-1/2 -translate-y-1/2 flex flex-col items-center gap-4 z-50">
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const viewport = document.getElementById('anatomy-modal-viewport');
+                      if (viewport) viewport.scrollBy({ top: -300, behavior: 'smooth' });
+                    }}
+                    className="w-16 h-16 bg-white rounded-3xl shadow-2xl border border-slate-100 flex items-center justify-center text-slate-600 hover:bg-emerald-500 hover:text-white transition-all active:scale-90 group/btn"
+                    title="เลื่อนขึ้น"
+                  >
+                    <ChevronUp className="w-8 h-8 group-hover/btn:-translate-y-1 transition-transform" />
+                  </button>
+
+                  <div className="flex gap-4">
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const viewport = document.getElementById('anatomy-modal-viewport');
+                        if (viewport) viewport.scrollBy({ left: -300, behavior: 'smooth' });
+                      }}
+                      className="w-16 h-16 bg-white rounded-3xl shadow-2xl border border-slate-100 flex items-center justify-center text-slate-600 hover:bg-emerald-500 hover:text-white transition-all active:scale-90 group/btn"
+                      title="เลื่อนซ้าย"
+                    >
+                      <ChevronLeft className="w-8 h-8 group-hover/btn:-translate-x-1 transition-transform" />
+                    </button>
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const viewport = document.getElementById('anatomy-modal-viewport');
+                        if (viewport) viewport.scrollBy({ left: 300, behavior: 'smooth' });
+                      }}
+                      className="w-16 h-16 bg-white rounded-3xl shadow-2xl border border-slate-100 flex items-center justify-center text-slate-600 hover:bg-emerald-500 hover:text-white transition-all active:scale-90 group/btn"
+                      title="เลื่อนขวา"
+                    >
+                      <ChevronRight className="w-8 h-8 group-hover/btn:translate-x-1 transition-transform" />
+                    </button>
+                  </div>
+
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const viewport = document.getElementById('anatomy-modal-viewport');
+                      if (viewport) viewport.scrollBy({ top: 300, behavior: 'smooth' });
+                    }}
+                    className="w-16 h-16 bg-white rounded-3xl shadow-2xl border border-slate-100 flex items-center justify-center text-slate-600 hover:bg-emerald-500 hover:text-white transition-all active:scale-90 group/btn"
+                    title="เลื่อนลง"
+                  >
+                    <ChevronDown className="w-8 h-8 group-hover/btn:translate-y-1 transition-transform" />
+                  </button>
+                </div>
+
+                <div 
+                  id="anatomy-modal-viewport"
+                  className="w-full h-full p-4 overflow-auto scroll-smooth hide-scrollbar"
+                >
+                  <div className="w-[150%] h-[150%] bg-white rounded-[3rem] border border-slate-100 shadow-inner relative flex items-center justify-center min-h-[1200px]">
+                    <AnatomyMap 
+                      onSelect={(loc) => {
+                        const currentParts = newItem.anatomicalParts || [];
+                        const index = currentParts.findIndex(l => l.toLowerCase() === loc.toLowerCase());
+                        let nextParts;
+                        if (index > -1) {
+                          nextParts = currentParts.filter((_, i) => i !== index);
+                        } else {
+                          nextParts = [...currentParts, loc];
+                        }
+                        setNewItem({...newItem, anatomicalParts: nextParts});
+                      }} 
+                      selectedLocations={newItem.anatomicalParts || []}
+                      customSvg={customAnatomySvg}
+                    />
+                    
+                    {/* Floating Input Panel (Top Right inside scroll area or fixed?) 
+                        Let's make it fixed so it's always available */}
+                  </div>
+                </div>
+
+                {/* Floating Feedback Panel (Fixed on the Left) */}
+                <div className="absolute top-8 left-8 z-50 w-full max-w-[calc(100%-8rem)] md:max-w-[400px] flex flex-col gap-4">
+                  {/* Selected Parts Info */}
+                  <div className="bg-white/95 backdrop-blur-xl px-6 py-4 rounded-[1.5rem] border border-emerald-100 shadow-2xl flex flex-col gap-1 w-full">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] leading-none">ระบุตำเเหน่งที่เลือก (PART ID)</span>
+                    <div className="text-lg font-black text-emerald-600 truncate min-h-[1.75rem]">
+                      {(newItem.anatomicalParts && newItem.anatomicalParts.length > 0) ? newItem.anatomicalParts.join(', ') : 'จิ้มที่อวัยวะเพื่อระบุตำแหน่ง'}
+                    </div>
+                  </div>
+
+                  {/* Mapping Input Box */}
+                  <div className="bg-white/95 backdrop-blur-xl px-6 py-4 rounded-[2rem] border-2 border-rose-400 shadow-2xl flex flex-col gap-2 w-full animate-in slide-in-from-left duration-500">
+                    <span className="text-[9px] font-black text-rose-500 uppercase tracking-[0.2em] leading-none">ระบุชื่ออวัยวะ (MAPPING)</span>
+                    <input 
+                      className="text-lg font-black text-slate-700 bg-transparent border-none outline-none p-0 w-full focus:ring-0 placeholder:text-slate-300"
+                      value={newItem.usageLocation || ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const organNames = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                        
+                        const allPartsSet = new Set<string>();
+                        organNames.forEach(name => {
+                          if (anatomicalMappings[name]) {
+                            anatomicalMappings[name].forEach(p => allPartsSet.add(p));
+                          }
+                        });
+
+                        setNewItem({
+                          ...newItem, 
+                          usageLocation: val,
+                          anatomicalParts: allPartsSet.size > 0 ? Array.from(allPartsSet) : newItem.anatomicalParts
+                        });
+                      }}
+                      placeholder="พิมพ์ชื่ออวัยวะ เช่น หู, ขา..."
+                    />
+                    <div className="text-[10px] text-slate-400 font-medium italic">
+                      *Mapping ข้อมูลเพื่อใช้แสดงผลในอนาคต
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bottom Center Save Panel (Fixed) */}
+                <div className="absolute bottom-8 left-0 right-0 flex justify-center z-50 pointer-events-none">
+                  <button 
+                    onClick={async () => {
+                      // Save mapping if name is provided and parts are selected
+                      if (newItem.usageLocation && newItem.anatomicalParts && newItem.anatomicalParts.length > 0) {
+                        const organNames = newItem.usageLocation.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                        
+                        let updatedMappings = { ...anatomicalMappings };
+                        organNames.forEach(name => {
+                          updatedMappings[name] = newItem.anatomicalParts!;
+                        });
+
+                        setAnatomicalMappings(updatedMappings);
+                        try {
+                          await setDoc(doc(db, 'settings', 'anatomy_mappings'), {
+                            mappings: updatedMappings,
+                            updatedAt: serverTimestamp()
+                          }, { merge: true });
+                        } catch (error) {
+                          console.error("Error saving mappings:", error);
+                        }
+                      }
+                      setIsAnatomyZoomed(false);
+                    }}
+                    className="bg-emerald-500 text-white h-14 px-10 rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-emerald-600 transition-all active:scale-95 shadow-2xl shadow-emerald-500/30 flex items-center gap-3 pointer-events-auto"
+                  >
+                    <Check className="w-5 h-5" />
+                    <span>ยืนยันข้อมูลและกลับหน้าเดิม</span>
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
