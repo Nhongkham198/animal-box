@@ -37,7 +37,9 @@ import {
   User as UserIcon,
   Stethoscope,
   PawPrint,
-  AlertCircle
+  AlertCircle,
+  ArrowLeftRight,
+  ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
@@ -73,6 +75,8 @@ import RewardSetting from './components/RewardSetting';
 import ProductSetting from './components/ProductSetting';
 import UsageSetting from './components/UsageSetting';
 import PaymentMethodSetting from './components/PaymentMethodSetting';
+import CustomerBookingForm from './components/CustomerBookingForm';
+import PrinterSetting from './components/PrinterSetting';
 
 type View = 
   | 'dashboard' 
@@ -81,8 +85,8 @@ type View =
   | 'opd' | 'add-opd'
   | 'ipd' | 'add-ipd'
   | 'finance' | 'public-booking'
-  | 'inventory' | 'pos' | 'analytics'
-  | 'settings-hospital' | 'settings-vet' | 'settings-contact' | 'settings-activities' | 'settings-reward' | 'settings-product' | 'settings-usage' | 'settings-payment';
+  | 'inventory' | 'pos' | 'analytics' | 'public-form'
+  | 'settings-hospital' | 'settings-vet' | 'settings-contact' | 'settings-activities' | 'settings-reward' | 'settings-product' | 'settings-usage' | 'settings-payment' | 'settings-printer';
 
 interface NavGroup {
   id: string;
@@ -216,6 +220,14 @@ function AppContent() {
     );
   }
 
+  if (activeView === 'public-form') {
+    return (
+      <div className="min-h-screen bg-slate-50 p-6 md:p-12">
+        <CustomerBookingForm onBack={() => setActiveView('public-booking')} />
+      </div>
+    );
+  }
+
   if (!user) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
@@ -239,6 +251,16 @@ function AppContent() {
           <h1 className="text-3xl font-bold text-slate-900 mb-2">{clinicName}</h1>
           <p className="text-slate-500 mb-10">Smart Clinic Management & EMR System</p>
           
+          <div className="mb-8">
+            <button
+               onClick={() => setActiveView('public-form')}
+               className="w-full flex items-center justify-center gap-2 py-3 px-6 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-bold transition-all border border-slate-200 shadow-sm"
+            >
+              <ExternalLink className="w-4 h-4" />
+              Preview Public Booking Form (Customer)
+            </button>
+          </div>
+
           <AnimatePresence>
             {(authError || localAuthError) && (
               <motion.div 
@@ -411,6 +433,7 @@ function AppContent() {
                   {activeView === 'settings-product' && <ProductSetting />}
                   {activeView === 'settings-usage' && <UsageSetting />}
                   {activeView === 'settings-payment' && <PaymentMethodSetting />}
+                  {activeView === 'settings-printer' && <PrinterSetting />}
                   {activeView === 'appointments' && <Appointments setActiveView={setActiveView} />}
                   {activeView === 'calendar' && <CalendarView setActiveView={setActiveView} />}
                   {activeView === 'add-appointment' && <AddAppointment />}
@@ -422,7 +445,7 @@ function AppContent() {
                   {activeView === 'pos' && <POS />}
                   {activeView === 'analytics' && <Analytics />}
                   {activeView === 'finance' && <Finance />}
-                  {activeView === 'public-booking' && <PublicBooking />}
+                  {activeView === 'public-booking' && <PublicBooking onOpenPublicForm={() => setActiveView('public-form')} />}
                   {activeView.startsWith('settings') && 
                     activeView !== 'settings-hospital' && 
                     activeView !== 'settings-vet' && 
@@ -444,19 +467,29 @@ function AppContent() {
         </main>
 
         <motion.div 
+          layout
           drag
           dragConstraints={constraintsRef}
           dragMomentum={false}
           dragElastic={0}
           onDragEnd={onDragEnd}
+          animate={{ x: 0, y: 0 }}
+          initial={false}
+          transition={{ 
+            type: 'spring', 
+            damping: 30, 
+            stiffness: 300
+          }}
           className={cn(
-            "fixed z-50 flex gap-4 group cursor-grab active:cursor-grabbing touch-none",
-            fabVertical === 'bottom' ? "bottom-8" : "top-8",
+            "fixed z-[10001] flex gap-4 group cursor-grab active:cursor-grabbing touch-none",
+            fabVertical === 'bottom' ? "bottom-8" : "top-24",
             fabSide === 'right' ? "right-8 items-end" : "left-8 items-start",
             fabVertical === 'bottom' ? "flex-col-reverse" : "flex-col"
           )}
         >
-          <button className="w-14 h-14 bg-[#00b4d8] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group-hover:rotate-45 pointer-events-none">
+          <button 
+            className="w-14 h-14 bg-[#00b4d8] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group-hover:rotate-45"
+          >
             <Plus className="w-8 h-8" />
           </button>
           
@@ -469,11 +502,12 @@ function AppContent() {
               { id: 'dashboard', label: 'Home', icon: LayoutDashboard, color: 'bg-blue-50 text-[#00b4d8]' },
               { id: 'add-pet', label: 'Add Pet', icon: PawPrint, color: 'bg-rose-50 text-rose-500' },
               { id: 'appointments', label: 'Appointment', icon: Calendar, color: 'bg-indigo-50 text-indigo-500' },
-              { id: 'pos', label: 'POS Billing', icon: CreditCard, color: 'bg-emerald-50 text-emerald-500' }
+              { id: 'pos', label: 'POS Billing', icon: CreditCard, color: 'bg-emerald-50 text-emerald-500' },
+              { id: 'toggle-side', label: 'Move Side', icon: ArrowLeftRight, color: 'bg-amber-50 text-amber-500', action: () => setFabSide(prev => prev === 'right' ? 'left' : 'right') }
             ].map((item) => (
               <button 
                 key={item.id}
-                onClick={() => setActiveView(item.id as View)}
+                onClick={() => item.action ? item.action() : setActiveView(item.id as View)}
                 className={cn(
                   "flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all whitespace-nowrap",
                   fabSide === 'right' ? "flex-row" : "flex-row-reverse"

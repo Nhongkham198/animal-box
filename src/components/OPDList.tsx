@@ -117,7 +117,8 @@ interface OPDRecord {
   groomingNotes?: string;
   attachments?: string[];
   items?: OPDItem[];
-  billingStatus?: 'unpaid' | 'paid' | 'none';
+  billingStatus?: 'unpaid' | 'paid' | 'none' | 'parked';
+  isParked?: boolean;
   vitals?: {
     weight?: string;
     temp?: string;
@@ -174,6 +175,7 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
     attachments: [],
     items: [],
     isFollowUp: false,
+    isParked: false,
     groomingSize: 'Small',
     groomingTreatment: false,
     groomingNotes: '',
@@ -436,8 +438,8 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
     };
   }, [isAuthReady, user, isStaff]);
 
-  const handleAddRecord = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAddRecord = async (e: React.FormEvent, isParking = false) => {
+    if (e) e.preventDefault();
     
     // 1. Prepare main record data
     const mainRevenue = (newRecord.items || []).reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0);
@@ -457,53 +459,53 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
 
     try {
       // 2. Save main record
+      const recordData = {
+        ...newRecord,
+        finalDiagnosis: mainDiagnosis,
+        revenue: mainRevenue,
+        isFollowUp: newRecord.isFollowUp || false,
+        isParked: isParking,
+        status: isParking ? 'Parked' : 'Completed',
+        billingStatus: isParking ? 'parked' : ((mainRevenue > 0 || newRecord.serviceCharge > 0) ? 'unpaid' : 'none'),
+        updatedAt: serverTimestamp()
+      };
+
       if (editingRecordId) {
-        await updateDoc(doc(db, 'opd_records', editingRecordId), {
-          ...newRecord,
-          finalDiagnosis: mainDiagnosis,
-          revenue: mainRevenue,
-          isFollowUp: newRecord.isFollowUp || false,
-          status: 'Completed',
-          billingStatus: (mainRevenue > 0 || newRecord.serviceCharge > 0) ? 'unpaid' : 'none',
-          updatedAt: serverTimestamp()
-        });
+        await updateDoc(doc(db, 'opd_records', editingRecordId), recordData);
       } else {
         await addDoc(collection(db, 'opd_records'), {
-          ...newRecord,
-          finalDiagnosis: mainDiagnosis,
-          revenue: mainRevenue,
-          isFollowUp: newRecord.isFollowUp || false,
-          status: 'Completed',
-          billingStatus: (mainRevenue > 0 || newRecord.serviceCharge > 0) ? 'unpaid' : 'none',
+          ...recordData,
           dateVisit: serverTimestamp(),
           createdAt: serverTimestamp()
         });
       }
 
-      // 3. Save merged records
-      for (const merged of mergedBillingRecords) {
-        const mergedRev = (merged.items || []).reduce((sum: number, i: any) => sum + (i.price * i.quantity), 0);
-        
-        // Find owner name for merged records
-        const queueItem = opdQueue.find(q => q.patientId === merged.patientId);
-        
-        await addDoc(collection(db, 'opd_records'), {
-          patientId: merged.patientId,
-          petName: merged.petName,
-          ownerName: queueItem?.ownerName || '',
-          category: 'Treatment',
-          finalDiagnosis: `Billing merged with ${newRecord.petName}`,
-          revenue: mergedRev,
-          items: merged.items,
-          status: 'Completed',
-          billingStatus: mergedRev > 0 ? 'unpaid' : 'none',
-          dateVisit: serverTimestamp(),
-          createdAt: serverTimestamp()
-        });
+      // 3. Save merged records (only if not parking, usually merge is done at final billing)
+      if (!isParking) {
+        for (const merged of mergedBillingRecords) {
+          const mergedRev = (merged.items || []).reduce((sum: number, i: any) => sum + (i.price * i.quantity), 0);
+          
+          // Find owner name for merged records
+          const queueItem = opdQueue.find(q => q.patientId === merged.patientId);
+          
+          await addDoc(collection(db, 'opd_records'), {
+            patientId: merged.patientId,
+            petName: merged.petName,
+            ownerName: queueItem?.ownerName || '',
+            category: 'Treatment',
+            finalDiagnosis: `Billing merged with ${newRecord.petName}`,
+            revenue: mergedRev,
+            items: merged.items,
+            status: 'Completed',
+            billingStatus: mergedRev > 0 ? 'unpaid' : 'none',
+            dateVisit: serverTimestamp(),
+            createdAt: serverTimestamp()
+          });
 
-        // Update queue item for merged patient if still in queue
-        if (queueItem) {
-          await updateDoc(doc(db, 'appointments', queueItem.id), { status: 'Completed' });
+          // Update queue item for merged patient if still in queue
+          if (queueItem) {
+            await updateDoc(doc(db, 'appointments', queueItem.id), { status: 'Completed' });
+          }
         }
       }
 
@@ -519,6 +521,7 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
         petName: '',
         category: 'Treatment',
         isFollowUp: false,
+        isParked: false,
         finalDiagnosis: '',
         status: 'Completed',
         attachments: [],
@@ -625,6 +628,7 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
       groomingSize: record.groomingSize || 'Small',
       groomingTreatment: record.groomingTreatment || false,
       groomingNotes: record.groomingNotes || '',
+      isParked: record.isParked || false,
       serviceCharge: (record as any).serviceCharge || 0
     });
     fetchPastRecords(record.patientId);
@@ -1021,7 +1025,9 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                     <td className="px-8 py-4">
                       <span className={cn(
                         "px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest",
-                        record.status === 'Completed' ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
+                        record.status === 'Completed' ? "bg-emerald-50 text-emerald-600" : 
+                        record.status === 'Parked' ? "bg-amber-100 text-amber-700" :
+                        "bg-amber-50 text-amber-600"
                       )}>
                         {record.status}
                       </span>
@@ -1054,11 +1060,12 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                             "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all border",
                             record.billingStatus === 'paid' ? "bg-emerald-50 text-emerald-600 border-emerald-100" :
                             record.billingStatus === 'unpaid' ? "bg-amber-50 text-amber-600 border-amber-100" :
+                            record.billingStatus === 'parked' ? "bg-amber-500 text-white border-amber-600 hover:bg-amber-600" :
                             "bg-blue-50 text-blue-600 border-blue-100 hover:bg-blue-100"
                           )}
                           title="Send to Billing"
                         >
-                          {record.billingStatus === 'paid' ? 'Paid' : record.billingStatus === 'unpaid' ? 'In Billing' : 'Billing'}
+                          {record.billingStatus === 'paid' ? 'Paid' : record.billingStatus === 'unpaid' ? 'In Billing' : record.billingStatus === 'parked' ? 'Parked' : 'Billing'}
                         </button>
 
                         {isEditMode && (
@@ -1760,6 +1767,13 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                             className="px-8 py-5 bg-slate-100 text-slate-500 rounded-[2rem] font-black uppercase tracking-widest hover:bg-slate-200 transition-all font-sans"
                           >
                             Back
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={(e) => handleAddRecord(e as any, true)}
+                            className="px-8 py-5 bg-amber-100 text-amber-600 rounded-[2rem] font-black uppercase tracking-widest hover:bg-amber-200 transition-all flex items-center gap-2"
+                          >
+                            <Clock className="w-5 h-5" /> พักบิล
                           </button>
                           <button 
                             type="submit"

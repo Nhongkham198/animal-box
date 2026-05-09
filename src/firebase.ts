@@ -31,6 +31,7 @@ import {
   serverTimestamp,
   getDocs
 } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase SDK
@@ -46,6 +47,7 @@ export const db = initializeFirestore(app, {
   localCache: memoryLocalCache()
 }, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
+export const storage = getStorage(app);
 
 // Test connection to Firestore
 export async function testFirestoreConnection() {
@@ -152,6 +154,9 @@ export {
   getDocFromServer,
   getDocsFromServer,
   serverTimestamp,
-  getDocs
+  getDocs,
+  ref,
+  uploadBytes,
+  getDownloadURL
 };
 export type { FirebaseUser };

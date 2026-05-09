@@ -11,7 +11,8 @@ import {
   Menu,
   Plus,
   LogOut,
-  User as UserIcon
+  User as UserIcon,
+  Printer
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
@@ -95,6 +96,7 @@ export default function Sidebar({
         { id: 'settings-product', label: 'Product Setting' },
         { id: 'settings-usage', label: 'ตั้งค่าการใช้งาน' },
         { id: 'settings-payment', label: 'Payment Method Setting' },
+        { id: 'settings-printer', label: 'Printer Setting' },
       ]
     },
   ];

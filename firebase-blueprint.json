@@ -231,6 +231,19 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["roomId", "patientId", "checkIn", "checkOut", "status"]
+    },
+    "PrinterConfig": {
+      "title": "Printer Configuration",
+      "description": "Calibration settings for the thermal label printer.",
+      "type": "object",
+      "properties": {
+        "labelWidth": { "type": "number" },
+        "labelHeight": { "type": "number" },
+        "gap": { "type": "number" },
+        "speed": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["labelWidth", "labelHeight", "gap"]
     }
   },
   "firestore": {
@@ -285,6 +298,10 @@
     "/room_bookings/{bookingId}": {
       "schema": "RoomBooking",
       "description": "Bookings for the pet rooms."
+    },
+    "/settings/printer": {
+      "schema": "PrinterConfig",
+      "description": "Global printer calibration settings."
     }
   }
 }

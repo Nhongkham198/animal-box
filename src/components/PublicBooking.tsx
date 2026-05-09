@@ -16,7 +16,11 @@ import {
   CreditCard,
   CheckCircle,
   AlertTriangle,
-  Droplets
+  Droplets,
+  FileImage,
+  Copy,
+  Check,
+  Plus
 } from 'lucide-react';
 import { 
   db, 
@@ -53,6 +57,7 @@ interface BookingRequest {
   serviceType: string;
   status: 'pending' | 'confirmed' | 'cancelled';
   createdAt: any;
+  vaccineImage?: string;
 }
 
 interface PetRoom {
@@ -81,11 +86,16 @@ interface RoomBooking {
   createdAt: any;
 }
 
-export default function PublicBooking() {
+interface PublicBookingProps {
+  onOpenPublicForm?: () => void;
+}
+
+export default function PublicBooking({ onOpenPublicForm }: PublicBookingProps) {
   const throwError = useAsyncError();
   const { user, isAuthReady, isStaff } = useAuth();
   const { setQuotaExceeded } = useClinic();
   const [activeTab, setActiveTab] = useState<'requests' | 'condo' | 'bathing'>('requests');
+  const [copied, setCopied] = useState(false);
   const [bookings, setBookings] = useState<BookingRequest[]>([]);
   const [rooms, setRooms] = useState<PetRoom[]>([]);
   const [roomBookings, setRoomBookings] = useState<RoomBooking[]>([]);
@@ -859,6 +869,26 @@ export default function PublicBooking() {
                           <span className="text-sm font-medium">Requested: {booking.requestedDate}</span>
                         </div>
                       </div>
+
+                      {booking.vaccineImage && (
+                        <div className="pt-4 mt-2 border-t border-slate-50 space-y-2">
+                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                             <FileImage className="w-3 h-3 text-indigo-400" />
+                             Vaccine Book Image (Verifying)
+                           </label>
+                           <div className="relative aspect-video rounded-2xl overflow-hidden border border-slate-100 shadow-inner group/img">
+                             <img 
+                               src={booking.vaccineImage} 
+                               alt="Vaccine Book" 
+                               className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform" 
+                               onClick={() => window.open(booking.vaccineImage, '_blank')}
+                             />
+                             <div className="absolute inset-0 bg-black/20 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+                                <ExternalLink className="w-6 h-6 text-white" />
+                             </div>
+                           </div>
+                        </div>
+                      )}
                     </div>
 
                     {booking.status === 'pending' && (
@@ -1205,18 +1235,67 @@ export default function PublicBooking() {
       </AnimatePresence>
 
       {/* Shareable Link Card */}
-      <div className="bg-[#00b4d8] p-8 rounded-3xl shadow-xl shadow-cyan-100 text-white flex items-center justify-between mt-8">
-        <div className="space-y-2">
-          <h3 className="text-xl font-black uppercase tracking-tight">Booking Link</h3>
-          <p className="text-white/70 text-sm font-medium">Share this link on Facebook or Line to receive appointment requests.</p>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="bg-white/10 px-4 py-2 rounded-xl border border-white/20 font-mono text-sm">
-            animalbox.clinic/book/v123
+      <div className="bg-gradient-to-br from-[#00b4d8] to-[#0077b6] p-10 rounded-[3rem] shadow-2xl shadow-cyan-100/50 text-white flex flex-col md:flex-row items-center justify-between mt-12 gap-8 border border-white/10 relative overflow-hidden group">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-3xl group-hover:bg-white/10 transition-colors" />
+        <div className="absolute bottom-0 left-0 w-32 h-32 bg-sky-400/20 rounded-full translate-y-1/2 -translate-x-1/2 blur-2xl" />
+        
+        <div className="relative z-10 space-y-3 text-center md:text-left">
+          <div className="flex items-center justify-center md:justify-start gap-3 mb-2">
+            <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm border border-white/20">
+              <Plus className="w-5 h-5" />
+            </div>
+            <h3 className="text-2xl font-black uppercase tracking-tighter italic">Booking Portal</h3>
           </div>
-          <button className="p-3 bg-white text-[#00b4d8] rounded-xl font-bold hover:bg-slate-50 transition-all">
-            <ExternalLink className="w-5 h-5" />
-          </button>
+          <p className="text-sky-50 font-medium text-lg leading-relaxed max-w-md">
+            Share this magical link with your clients to collect appointment requests effortlessly.
+          </p>
+        </div>
+
+        <div className="relative z-10 flex flex-col items-center md:items-end gap-4 w-full md:w-auto">
+          <div className="flex items-center gap-3 w-full">
+            <div className="flex-1 bg-white/15 backdrop-blur-md px-6 py-4 rounded-2xl border border-white/20 font-mono text-sm tracking-tight text-sky-50 shadow-inner truncate max-w-[200px] md:max-w-none">
+              animalbox.clinic/book/v123
+            </div>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => {
+                  navigator.clipboard.writeText('animalbox.clinic/book/v123');
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}
+                className={cn(
+                  "p-4 rounded-2xl font-bold transition-all flex items-center justify-center shadow-lg active:scale-90",
+                  copied 
+                    ? "bg-emerald-400 text-white shadow-emerald-500/20" 
+                    : "bg-white text-[#00b4d8] hover:bg-sky-50 shadow-sky-900/20"
+                )}
+                title="Copy Link"
+              >
+                {copied ? <Check className="w-6 h-6 animate-in zoom-in duration-300" /> : <Copy className="w-6 h-6" />}
+              </button>
+              
+              <button 
+                onClick={onOpenPublicForm}
+                className="p-4 bg-white text-[#00b4d8] rounded-2xl font-bold hover:bg-sky-50 transition-all shadow-lg shadow-sky-900/20 flex items-center justify-center active:scale-90"
+                title="Open Preview"
+              >
+                <ExternalLink className="w-6 h-6" />
+              </button>
+            </div>
+          </div>
+          
+          <AnimatePresence>
+            {copied && (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="text-xs font-black text-emerald-300 uppercase tracking-[0.2em]"
+              >
+                Link Copied Successfully!
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
     </div>
