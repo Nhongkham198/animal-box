@@ -1,4 +1,5 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, FormEvent, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import { 
   db, 
   collection, 
@@ -11,7 +12,8 @@ import {
   orderBy,
   Timestamp,
   handleFirestoreError,
-  OperationType
+  OperationType,
+  writeBatch
 } from '../firebase';
 import { useAsyncError } from '../hooks/useAsyncError';
 import { useAuth } from '../contexts/AuthContext';
@@ -26,7 +28,11 @@ import {
   Filter,
   XCircle,
   TrendingDown,
-  ShoppingCart
+  ShoppingCart,
+  FileSpreadsheet,
+  CheckCircle2,
+  Info,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -48,6 +54,17 @@ export default function Inventory() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Import Result State
+  const [importSummary, setImportSummary] = useState<{
+    total: number;
+    success: number;
+    duplicates: string[];
+    show: boolean;
+  } | null>(null);
+
+  const [isImporting, setIsImporting] = useState(false);
 
   // Form state
   const [newItem, setNewItem] = useState({
@@ -123,6 +140,100 @@ export default function Inventory() {
 
   const lowStockCount = items.filter(i => i.quantity <= i.minStock).length;
 
+  const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    const reader = new FileReader();
+
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        
+        let totalItems = 0;
+        let successCount = 0;
+        const duplicateNames: string[] = [];
+
+        // Categories mapping based on sheets provided by user
+        const sheetMappings: Record<string, string> = {
+          'ยาฉีด': 'Injectable Medicine',
+          'ยากิน': 'Oral Medicine',
+          'ใช้ในหู': 'Ear Care',
+          'ใช้กับตา': 'Eye Care',
+          'Testkit': 'Diagnostics'
+        };
+
+        // We'll process all sheets
+        for (const sheetName of wb.SheetNames) {
+          const category = sheetMappings[sheetName] || 'General';
+          const ws = wb.Sheets[sheetName];
+          const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+
+          // Skip header row (index 0)
+          const rows = data.slice(1);
+          
+          for (const row of rows) {
+            // Mapping based on image structure:
+            // Col A (index 0): Name
+            // Col B (index 1): Unit info (e.g. 2 ml/ขวด)
+            // Col C (index 2): Price
+            const name = String(row[0] || '').trim();
+            const unitInfo = String(row[1] || '').trim();
+            const price = Number(row[2]) || 0;
+
+            if (!name) continue; // Skip empty rows
+
+            totalItems++;
+            const fullItemName = unitInfo ? `${name} (${unitInfo})` : name;
+
+            // Check for duplicate in local state (which is synced with DB)
+            const isDuplicate = items.some(
+              i => i.itemName.toLowerCase() === fullItemName.toLowerCase() && i.category === category
+            );
+
+            if (isDuplicate) {
+              duplicateNames.push(fullItemName);
+              continue;
+            }
+
+            // Not a duplicate -> Add to DB
+            try {
+              await addDoc(collection(db, 'inventory'), {
+                itemName: fullItemName,
+                category: category,
+                unitPrice: price,
+                quantity: 0, // Default to 0 stock
+                minStock: 10, // Default alert level
+                createdAt: Timestamp.now()
+              });
+              successCount++;
+            } catch (err) {
+              console.error("Error importing row:", name, err);
+            }
+          }
+        }
+
+        setImportSummary({
+          total: totalItems,
+          success: successCount,
+          duplicates: duplicateNames,
+          show: true
+        });
+
+      } catch (err) {
+        console.error("Excel processing error:", err);
+        alert("เกิดข้อผิดพลาดในการอ่านไฟล์ Excel");
+      } finally {
+        setIsImporting(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    };
+
+    reader.readAsBinaryString(file);
+  };
+
   return (
     <div className="h-full flex flex-col gap-8">
       {/* Header & Stats */}
@@ -174,7 +285,22 @@ export default function Inventory() {
           />
         </div>
         <div className="flex items-center gap-3">
-          <button className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all">
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            accept=".xlsx, .xls, .csv" 
+            className="hidden" 
+            onChange={handleImportExcel}
+          />
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isImporting}
+            className="flex items-center gap-2 px-6 py-3 bg-indigo-50 border border-indigo-100 rounded-2xl text-indigo-600 font-black text-xs uppercase tracking-widest hover:bg-indigo-100 transition-all shadow-sm disabled:opacity-50"
+          >
+            {isImporting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
+            Import Excel
+          </button>
+          <button className="flex items-center gap-2 px-4 py-3 bg-white border border-slate-200 rounded-2xl text-slate-600 font-bold text-xs uppercase tracking-widest hover:bg-slate-50 transition-all">
             <Filter className="w-4 h-4" />
             Category
           </button>
@@ -277,6 +403,79 @@ export default function Inventory() {
 
       {/* New Item Modal */}
       <AnimatePresence>
+        {importSummary && importSummary.show && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setImportSummary(prev => prev ? {...prev, show: false} : null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 30 }}
+              className="relative bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden"
+            >
+              <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-8 text-white flex items-center justify-between">
+                <div>
+                  <h3 className="text-2xl font-black uppercase tracking-tighter">Import Summary</h3>
+                  <p className="text-white/70 text-sm font-medium">สรุปผลการนำเข้าข้อมูลครุภัณฑ์ยาจาก Excel</p>
+                </div>
+                <button 
+                  onClick={() => setImportSummary(prev => prev ? {...prev, show: false} : null)}
+                  className="p-3 bg-white/10 hover:bg-white/20 rounded-2xl transition-all"
+                >
+                  <XCircle className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="p-8 space-y-8">
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 flex flex-col items-center">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Found in File</p>
+                    <p className="text-3xl font-black text-slate-900">{importSummary.total}</p>
+                  </div>
+                  <div className="bg-emerald-50 p-6 rounded-3xl border border-emerald-100 flex flex-col items-center">
+                    <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1">Success</p>
+                    <p className="text-3xl font-black text-emerald-600">{importSummary.success}</p>
+                  </div>
+                  <div className="bg-rose-50 p-6 rounded-3xl border border-rose-100 flex flex-col items-center">
+                    <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1">Duplicates</p>
+                    <p className="text-3xl font-black text-rose-600">{importSummary.duplicates.length}</p>
+                  </div>
+                </div>
+
+                {importSummary.duplicates.length > 0 && (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 text-rose-600">
+                      <AlertTriangle className="w-5 h-5" />
+                      <h4 className="font-black uppercase tracking-tight text-sm">รายการที่ซ้ำ (ข้ามการนำเข้า)</h4>
+                    </div>
+                    <div className="max-h-[250px] overflow-y-auto bg-slate-50 rounded-2xl p-4 border border-slate-200 divide-y divide-slate-200">
+                      {importSummary.duplicates.map((name, idx) => (
+                        <div key={idx} className="py-3 flex items-center justify-between group">
+                          <span className="text-sm font-bold text-slate-600">{name}</span>
+                          <span className="text-[10px] bg-rose-100 text-rose-600 px-2 py-1 rounded-lg font-black uppercase tracking-tighter opacity-0 group-hover:opacity-100 transition-all">Skipped</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <button 
+                  onClick={() => setImportSummary(prev => prev ? {...prev, show: false} : null)}
+                  className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-black transition-all shadow-xl shadow-slate-200 flex items-center justify-center gap-3"
+                >
+                  <CheckCircle2 className="w-5 h-5" />
+                  เสร็จสิ้น
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {isModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
             <motion.div 

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import { 
   Plus, 
   Search, 
@@ -12,10 +13,27 @@ import {
   Image as ImageIcon,
   Check,
   Minus,
-  Upload
+  Upload,
+  FileSpreadsheet,
+  Lock,
+  AlertTriangle,
+  RefreshCw,
+  CheckCircle2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { 
+  db, 
+  collection, 
+  onSnapshot, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  doc, 
+  handleFirestoreError,
+  OperationType,
+  serverTimestamp
+} from '../firebase';
 
 interface Product {
   id: string;
@@ -23,6 +41,11 @@ interface Product {
   type: string;
   unit: string;
   isInStock: boolean;
+  productType?: string;
+  genericName?: string;
+  barcode?: string;
+  price?: number;
+  [key: string]: any;
 }
 
 const initialProducts: Product[] = [
@@ -45,8 +68,41 @@ const DOSAGE_UNITS = ['เม็ด', 'CC', 'ML', 'หยด', 'หลอด'];
 
 export default function ProductSetting() {
   const [mode, setMode] = useState<'list' | 'edit'>('list');
-  const [products, setProducts] = useState<Product[]>(initialProducts);
+  const [products, setProducts] = useState<Product[]>([]);
   const [editingProduct, setEditingProduct] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Sync with Firestore
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'inventory'), (snapshot) => {
+      const items = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Product[];
+      setProducts(items);
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'inventory');
+      setLoading(false);
+    });
+
+    return () => unsub();
+  }, []);
+  
+  // Import State
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importSummary, setImportSummary] = useState<{
+    total: number;
+    success: number;
+    duplicates: string[];
+    show: boolean;
+  } | null>(null);
+
+  // Delete State
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [passcode, setPasscode] = useState('');
+  const [deleteError, setDeleteError] = useState(false);
 
   const handleCreate = () => {
     setEditingProduct({
@@ -98,15 +154,23 @@ export default function ProductSetting() {
   };
 
   const handleEdit = (product: Product) => {
-    // In a real app, we'd fetch full details. For now, mock it.
     setEditingProduct({
-      ...product,
+      id: product.id,
+      name: product.name,
       type: 'product',
+      genericName: '',
       productType: product.type,
+      unit: product.unit,
+      barcode: '',
       valueGroup: 'low',
       safetyStock: 0,
       leadTime: 0,
       maxStock: 0,
+      activityGroup: '',
+      activitySubGroup: '',
+      petTypes: [],
+      printGroup: '',
+      price: 0,
       status: {
         appoint: { active: true, favorite: false },
         opd: { active: true, favorite: false },
@@ -118,34 +182,155 @@ export default function ProductSetting() {
         amount: 0.01,
         showInReceipt: true
       },
-      drugLabel: { enabled: true, slots: {}, warnings: {} }
+      drugLabel: {
+        enabled: true,
+        medicalUse: '',
+        position: '',
+        dosage: 0,
+        dosageUnit: '',
+        timing: 'after',
+        timingDetail: '',
+        slots: { morning: false, noon: false, evening: false, bedtime: false },
+        other: false,
+        every: 0,
+        asNeeded: false,
+        warnings: { noEat: false, fridge: false, danger: false, shake: false },
+        purpose: '',
+        additional: ''
+      }
     });
     setMode('edit');
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!editingProduct.name) {
       alert('Please enter product name');
       return;
     }
 
-    const newProduct: Product = {
-      id: editingProduct.id,
-      name: editingProduct.name,
-      type: editingProduct.productType || 'Other',
-      unit: editingProduct.unit || 'Unit',
-      isInStock: true
-    };
+    try {
+      const productData = {
+        ...editingProduct,
+        name: editingProduct.name,
+        type: editingProduct.productType || 'Other',
+        unit: editingProduct.unit || 'Unit',
+        updatedAt: serverTimestamp()
+      };
 
-    setProducts(prev => {
-      const exists = prev.find(p => p.id === newProduct.id);
-      if (exists) {
-        return prev.map(p => p.id === newProduct.id ? newProduct : p);
+      // If it's a new product (no ID exists in a way that implies creation or we want to force it)
+      // Actually editingProduct.id is set in handleCreate, but we should check if it's existing in Firestore
+      const isNew = !products.some(p => p.id === editingProduct.id);
+
+      if (isNew) {
+        const { id, ...dataToSave } = productData;
+        await addDoc(collection(db, 'inventory'), {
+          ...dataToSave,
+          isInStock: true,
+          createdAt: serverTimestamp()
+        });
+      } else {
+        const { id, ...dataToUpdate } = productData;
+        await updateDoc(doc(db, 'inventory', id), dataToUpdate);
       }
-      return [...prev, newProduct];
-    });
+      setMode('list');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'inventory');
+    }
+  };
 
-    setMode('list');
+  const toggleStock = async (product: Product) => {
+    try {
+      await updateDoc(doc(db, 'inventory', product.id), {
+        isInStock: !product.isInStock,
+        updatedAt: serverTimestamp()
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `inventory/${product.id}`);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (passcode !== '999') {
+      setDeleteError(true);
+      return;
+    }
+
+    if (deletingId) {
+      try {
+        await deleteDoc(doc(db, 'inventory', deletingId));
+        setDeletingId(null);
+        setPasscode('');
+        setDeleteError(false);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, `inventory/${deletingId}`);
+      }
+    }
+  };
+
+  const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    const reader = new FileReader();
+
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        
+        let totalItems = 0;
+        let successCount = 0;
+        const duplicateNames: string[] = [];
+        const newProducts: Product[] = [];
+
+        for (const sheetName of wb.SheetNames) {
+          const ws = wb.Sheets[sheetName];
+          const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+          const rows = data.slice(1);
+          
+          for (const row of rows) {
+            const name = String(row[0] || '').trim();
+            const type = String(row[1] || 'Other').trim();
+            const unit = String(row[2] || 'Unit').trim();
+
+            if (!name) continue;
+            totalItems++;
+
+            const isDuplicate = products.some(p => p.name.toLowerCase() === name.toLowerCase());
+
+            if (isDuplicate) {
+              duplicateNames.push(name);
+              continue;
+            }
+
+            await addDoc(collection(db, 'inventory'), {
+              name,
+              type,
+              unit,
+              isInStock: true,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            });
+            successCount++;
+          }
+        }
+
+        setImportSummary({
+          total: totalItems,
+          success: successCount,
+          duplicates: duplicateNames,
+          show: true
+        });
+
+      } catch (err) {
+        console.error("Import error:", err);
+      } finally {
+        setIsImporting(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    };
+    reader.readAsBinaryString(file);
   };
 
   if (mode === 'edit') {
@@ -408,7 +593,7 @@ export default function ProductSetting() {
                     <label className="block text-sm font-bold text-slate-700 mb-2">Pet Type</label>
                     <div className="relative">
                       <select 
-                        value={editingProduct.petTypes[0] || ''}
+                        value={editingProduct.petTypes?.[0] || ''}
                         onChange={(e) => setEditingProduct({ ...editingProduct, petTypes: [e.target.value] })}
                         className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 focus:ring-2 focus:ring-[#00b4d8] outline-none appearance-none font-medium"
                       >
@@ -644,69 +829,72 @@ export default function ProductSetting() {
                   />
                 </div>
 
-                <div className="flex items-center gap-6">
-                  <p className="text-sm font-bold text-slate-700 w-32">ปริมาณการใช้ (ต่อครั้ง)</p>
-                  <div className="flex items-center w-32 border border-slate-100 bg-slate-50/50 rounded-lg overflow-hidden">
-                    <button 
-                      onClick={() => setEditingProduct({
-                        ...editingProduct,
-                        drugLabel: { ...editingProduct.drugLabel, dosage: Math.max(0, editingProduct.drugLabel.dosage - 1) }
-                      })}
-                      className="p-2 hover:bg-slate-100 text-slate-400 transition-colors border-r border-slate-100"
-                    >
-                      <Minus className="w-4 h-4" />
-                    </button>
-                    <input 
-                      type="number"
-                      value={editingProduct.drugLabel.dosage}
-                      onChange={(e) => setEditingProduct({
-                        ...editingProduct,
-                        drugLabel: { ...editingProduct.drugLabel, dosage: parseFloat(e.target.value) }
-                      })}
-                      className="w-full text-center font-bold text-slate-700 outline-none bg-transparent"
-                    />
-                    <button 
-                      onClick={() => setEditingProduct({
-                        ...editingProduct,
-                        drugLabel: { ...editingProduct.drugLabel, dosage: editingProduct.drugLabel.dosage + 1 }
-                      })}
-                      className="p-2 hover:bg-slate-100 text-slate-400 transition-colors border-l border-slate-100"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
-                  </div>
-                  <div className="relative w-48">
-                    <select 
-                      value={editingProduct.drugLabel.dosageUnit}
-                      onChange={(e) => setEditingProduct({
-                        ...editingProduct,
-                        drugLabel: { ...editingProduct.drugLabel, dosageUnit: e.target.value }
-                      })}
-                      className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 focus:ring-2 focus:ring-[#00b4d8] outline-none appearance-none font-medium"
-                    >
-                      <option value="">Select Unit</option>
-                      {DOSAGE_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                    </select>
-                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <div className="flex flex-col sm:flex-row sm:items-center gap-6">
+                  <p className="text-sm font-bold text-slate-700 w-32 shrink-0">ปริมาณการใช้ (ต่อครั้ง)</p>
+                  <div className="flex items-center gap-6 flex-1">
+                    <div className="flex items-center w-32 border border-slate-100 bg-slate-50/50 rounded-lg overflow-hidden shrink-0">
+                      <button 
+                        onClick={() => setEditingProduct({
+                          ...editingProduct,
+                          drugLabel: { ...editingProduct.drugLabel, dosage: Math.max(0, editingProduct.drugLabel.dosage - 1) }
+                        })}
+                        className="p-2 hover:bg-slate-100 text-slate-400 transition-colors border-r border-slate-100"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
+                      <input 
+                        type="number"
+                        value={editingProduct.drugLabel.dosage}
+                        onChange={(e) => setEditingProduct({
+                          ...editingProduct,
+                          drugLabel: { ...editingProduct.drugLabel, dosage: parseFloat(e.target.value) }
+                        })}
+                        className="w-full text-center font-bold text-slate-700 outline-none bg-transparent"
+                      />
+                      <button 
+                        onClick={() => setEditingProduct({
+                          ...editingProduct,
+                          drugLabel: { ...editingProduct.drugLabel, dosage: editingProduct.drugLabel.dosage + 1 }
+                        })}
+                        className="p-2 hover:bg-slate-100 text-slate-400 transition-colors border-l border-slate-100"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="relative w-48 shrink-0">
+                      <select 
+                        value={editingProduct.drugLabel.dosageUnit}
+                        onChange={(e) => setEditingProduct({
+                          ...editingProduct,
+                          drugLabel: { ...editingProduct.drugLabel, dosageUnit: e.target.value }
+                        })}
+                        className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 focus:ring-2 focus:ring-[#00b4d8] outline-none appearance-none font-medium"
+                      >
+                        <option value="">Select Unit</option>
+                        {DOSAGE_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                      </select>
+                      <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    </div>
                   </div>
                 </div>
 
-                <div className="space-y-6">
-                  <div className="flex items-center gap-12">
-                    <p className="text-sm font-bold text-slate-700 w-32">เวลา</p>
-                    <div className="flex gap-8">
+                <div className="space-y-8">
+                  {/* Timing Section */}
+                  <div className="flex flex-col lg:flex-row lg:items-start gap-4">
+                    <p className="text-sm font-bold text-slate-700 w-32 shrink-0 pt-3">เวลา</p>
+                    <div className="flex flex-wrap gap-x-12 gap-y-6 flex-1">
                       {[
                         { label: 'Before Meals', value: 'before' },
                         { label: 'After Meals', value: 'after' },
                         { label: 'With Meals', value: 'with' }
                       ].map((item) => (
-                        <div key={item.value} className="flex items-center gap-6">
+                        <div key={item.value} className="flex flex-col sm:flex-row sm:items-center gap-3 w-full sm:w-auto">
                           <label 
                             onClick={() => setEditingProduct({
                               ...editingProduct,
                               drugLabel: { ...editingProduct.drugLabel, timing: item.value }
                             })}
-                            className="flex items-center gap-3 cursor-pointer"
+                            className="flex items-center gap-3 cursor-pointer shrink-0"
                           >
                             <div className={cn(
                               "w-5 h-5 rounded-full border-2 flex items-center justify-center",
@@ -724,55 +912,55 @@ export default function ProductSetting() {
                               ...editingProduct,
                               drugLabel: { ...editingProduct.drugLabel, timingDetail: e.target.value }
                             })}
-                            className="px-4 py-2 rounded-lg border border-slate-100 bg-slate-50/50 outline-none text-xs w-48"
+                            className="px-4 py-2 rounded-lg border border-slate-100 bg-slate-50/50 outline-none text-xs w-full sm:w-48"
                           />
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-12 ml-44">
-                    <div className="flex gap-4">
-                      {[
-                        { label: 'เช้า', key: 'morning' },
-                        { label: 'กลางวัน', key: 'noon' },
-                        { label: 'เย็น', key: 'evening' },
-                        { label: 'ก่อนนอน', key: 'bedtime' }
-                      ].map((item) => (
-                        <label 
-                          key={item.key}
-                          onClick={() => setEditingProduct({
-                            ...editingProduct,
-                            drugLabel: {
-                              ...editingProduct.drugLabel,
-                              slots: { ...editingProduct.drugLabel.slots, [item.key]: !editingProduct.drugLabel.slots[item.key] }
-                            }
-                          })}
-                          className={cn(
-                            "flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer transition-all",
-                            editingProduct.drugLabel.slots[item.key] ? "border-[#00b4d8] bg-cyan-50" : "border-slate-100 bg-slate-50/50 opacity-40"
-                          )}
-                        >
-                          <div className={cn(
-                            "w-4 h-4 rounded border flex items-center justify-center transition-all",
-                            editingProduct.drugLabel.slots[item.key] ? "border-[#00b4d8] bg-[#00b4d8]" : "border-slate-300 bg-white"
-                          )}>
-                            {editingProduct.drugLabel.slots[item.key] && <Check className="w-2.5 h-2.5 text-white stroke-[4]" />}
-                          </div>
-                          <span className={cn("text-xs font-bold", editingProduct.drugLabel.slots[item.key] ? "text-[#00b4d8]" : "text-slate-400")}>{item.label}</span>
-                        </label>
-                      ))}
-                    </div>
+                  {/* Daily Slots */}
+                  <div className="flex flex-wrap gap-4 sm:ml-36">
+                    {[
+                      { label: 'เช้า', key: 'morning' },
+                      { label: 'กลางวัน', key: 'noon' },
+                      { label: 'เย็น', key: 'evening' },
+                      { label: 'ก่อนนอน', key: 'bedtime' }
+                    ].map((item) => (
+                      <label 
+                        key={item.key}
+                        onClick={() => setEditingProduct({
+                          ...editingProduct,
+                          drugLabel: {
+                            ...editingProduct.drugLabel,
+                            slots: { ...editingProduct.drugLabel.slots, [item.key]: !editingProduct.drugLabel.slots[item.key] }
+                          }
+                        })}
+                        className={cn(
+                          "flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer transition-all",
+                          editingProduct.drugLabel.slots[item.key] ? "border-[#00b4d8] bg-cyan-50" : "border-slate-100 bg-slate-50/50 opacity-40"
+                        )}
+                      >
+                        <div className={cn(
+                          "w-4 h-4 rounded border flex items-center justify-center transition-all",
+                          editingProduct.drugLabel.slots[item.key] ? "border-[#00b4d8] bg-[#00b4d8]" : "border-slate-300 bg-white"
+                        )}>
+                          {editingProduct.drugLabel.slots[item.key] && <Check className="w-2.5 h-2.5 text-white stroke-[4]" />}
+                        </div>
+                        <span className={cn("text-xs font-bold", editingProduct.drugLabel.slots[item.key] ? "text-[#00b4d8]" : "text-slate-400")}>{item.label}</span>
+                      </label>
+                    ))}
                   </div>
 
-                  <div className="flex items-center gap-12 ml-44">
-                    <div className="flex items-center gap-8">
+                  {/* Other Options */}
+                  <div className="flex flex-wrap gap-x-12 gap-y-6 sm:ml-36">
+                    <div className="flex flex-wrap items-center gap-8">
                       <label 
                         onClick={() => setEditingProduct({
                           ...editingProduct,
                           drugLabel: { ...editingProduct.drugLabel, other: !editingProduct.drugLabel.other }
                         })}
-                        className="flex items-center gap-3 cursor-pointer"
+                        className="flex items-center gap-3 cursor-pointer shrink-0"
                       >
                         <div className={cn(
                           "w-5 h-5 rounded-full border-2 flex items-center justify-center",
@@ -801,7 +989,7 @@ export default function ProductSetting() {
                           ...editingProduct,
                           drugLabel: { ...editingProduct.drugLabel, asNeeded: !editingProduct.drugLabel.asNeeded }
                         })}
-                        className="flex items-center gap-3 cursor-pointer"
+                        className="flex items-center gap-3 cursor-pointer shrink-0"
                       >
                         <div className={cn(
                           "w-4 h-4 rounded border flex items-center justify-center transition-all",
@@ -813,62 +1001,64 @@ export default function ProductSetting() {
                       </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="grid grid-cols-2 gap-4 ml-44">
-                  {[
-                    { label: 'ห้ามรับประทาน', key: 'noEat' },
-                    { label: 'เก็บในตู้เย็น', key: 'fridge' },
-                    { label: 'ยาอันตราย', key: 'danger' },
-                    { label: 'เขย่าก่อนใช้', key: 'shake' }
-                  ].map((item) => (
-                    <div 
-                      key={item.key}
-                      onClick={() => setEditingProduct({
-                        ...editingProduct,
-                        drugLabel: {
-                          ...editingProduct.drugLabel,
-                          warnings: { ...editingProduct.drugLabel.warnings, [item.key]: !editingProduct.drugLabel.warnings[item.key] }
-                        }
-                      })}
-                      className="flex items-center gap-3 cursor-pointer"
-                    >
-                      <div className={cn(
-                        "w-4 h-4 rounded border flex items-center justify-center transition-all",
-                        editingProduct.drugLabel.warnings[item.key] ? "border-red-500 bg-red-500" : "border-slate-200 bg-white"
-                      )}>
-                        {editingProduct.drugLabel.warnings[item.key] && <Check className="w-2.5 h-2.5 text-white stroke-[4]" />}
+                  {/* Warning Stickers */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:ml-36">
+                    {[
+                      { label: 'ห้ามรับประทาน', key: 'noEat' },
+                      { label: 'เก็บในตู้เย็น', key: 'fridge' },
+                      { label: 'ยาอันตราย', key: 'danger' },
+                      { label: 'เขย่าก่อนใช้', key: 'shake' }
+                    ].map((item) => (
+                      <div 
+                        key={item.key}
+                        onClick={() => setEditingProduct({
+                          ...editingProduct,
+                          drugLabel: {
+                            ...editingProduct.drugLabel,
+                            warnings: { ...editingProduct.drugLabel.warnings, [item.key]: !editingProduct.drugLabel.warnings[item.key] }
+                          }
+                        })}
+                        className="flex items-center gap-3 cursor-pointer"
+                      >
+                        <div className={cn(
+                          "w-4 h-4 rounded border flex items-center justify-center transition-all",
+                          editingProduct.drugLabel.warnings[item.key] ? "border-red-500 bg-red-500" : "border-slate-200 bg-white"
+                        )}>
+                          {editingProduct.drugLabel.warnings[item.key] && <Check className="w-2.5 h-2.5 text-white stroke-[4]" />}
+                        </div>
+                        <span className={cn("text-sm font-bold", editingProduct.drugLabel.warnings[item.key] ? "text-red-500" : "text-slate-400")}>{item.label}</span>
                       </div>
-                      <span className={cn("text-sm font-bold", editingProduct.drugLabel.warnings[item.key] ? "text-red-500" : "text-slate-400")}>{item.label}</span>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
 
-                <div className="flex items-center gap-12">
-                  <p className="text-sm font-bold text-slate-700 w-32">วัตถุประสงค์</p>
-                  <input 
-                    type="text"
-                    placeholder="ยาต้านการแข็งตัวของเลือด"
-                    value={editingProduct.drugLabel.purpose}
-                    onChange={(e) => setEditingProduct({
-                      ...editingProduct,
-                      drugLabel: { ...editingProduct.drugLabel, purpose: e.target.value }
-                    })}
-                    className="flex-1 px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-medium"
-                  />
-                </div>
+                  {/* Purpose & Additional info */}
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                    <p className="text-sm font-bold text-slate-700 w-32 shrink-0">วัตถุประสงค์</p>
+                    <input 
+                      type="text"
+                      placeholder="ยาต้านการแข็งตัวของเลือด"
+                      value={editingProduct.drugLabel.purpose}
+                      onChange={(e) => setEditingProduct({
+                        ...editingProduct,
+                        drugLabel: { ...editingProduct.drugLabel, purpose: e.target.value }
+                      })}
+                      className="flex-1 px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-medium"
+                    />
+                  </div>
 
-                <div className="flex items-center gap-12">
-                  <p className="text-sm font-bold text-slate-700 w-32">เพิ่มเติม</p>
-                  <input 
-                    type="text"
-                    value={editingProduct.drugLabel.additional}
-                    onChange={(e) => setEditingProduct({
-                      ...editingProduct,
-                      drugLabel: { ...editingProduct.drugLabel, additional: e.target.value }
-                    })}
-                    className="flex-1 px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-medium"
-                  />
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                    <p className="text-sm font-bold text-slate-700 w-32 shrink-0">เพิ่มเติม</p>
+                    <input 
+                      type="text"
+                      value={editingProduct.drugLabel.additional}
+                      onChange={(e) => setEditingProduct({
+                        ...editingProduct,
+                        drugLabel: { ...editingProduct.drugLabel, additional: e.target.value }
+                      })}
+                      className="flex-1 px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-medium"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -883,13 +1073,30 @@ export default function ProductSetting() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-900 uppercase tracking-tight">PRODUCT SETTING</h1>
-        <button 
-          onClick={handleCreate}
-          className="flex items-center gap-2 px-6 py-2 bg-[#00b4d8] text-white rounded-lg font-bold hover:bg-[#0096b1] transition-all shadow-lg shadow-cyan-100"
-        >
-          <Plus className="w-4 h-4" />
-          Create New Product
-        </button>
+        <div className="flex items-center gap-4">
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            accept=".xlsx,.xls" 
+            onChange={handleImportExcel} 
+            className="hidden"
+          />
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isImporting}
+            className="flex items-center gap-2 px-6 py-2 bg-indigo-50 text-indigo-600 rounded-lg font-bold hover:bg-indigo-100 transition-all disabled:opacity-50"
+          >
+            {isImporting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
+            Import Excel
+          </button>
+          <button 
+            onClick={handleCreate}
+            className="flex items-center gap-2 px-6 py-2 bg-[#00b4d8] text-white rounded-lg font-bold hover:bg-[#0096b1] transition-all shadow-lg shadow-cyan-100"
+          >
+            <Plus className="w-4 h-4" />
+            Create New Product
+          </button>
+        </div>
       </div>
 
       {/* Search & Filter Bar */}
@@ -935,7 +1142,14 @@ export default function ProductSetting() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {products.map((product, index) => (
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-12 text-center">
+                    <RefreshCw className="w-6 h-6 text-[#00b4d8] animate-spin mx-auto mb-2" />
+                    <p className="text-slate-400 font-bold">Loading Products...</p>
+                  </td>
+                </tr>
+              ) : products.length > 0 ? products.map((product, index) => (
                 <tr key={product.id} className="hover:bg-slate-50/50 transition-colors group">
                   <td className="px-6 py-4 text-center font-medium text-slate-500">{index + 1}</td>
                   <td className="px-6 py-4">
@@ -944,25 +1158,187 @@ export default function ProductSetting() {
                   <td className="px-6 py-4 text-center text-slate-700 font-medium">{product.type}</td>
                   <td className="px-6 py-4 text-center text-slate-700 font-medium">{product.unit}</td>
                   <td className="px-6 py-4 text-center">
-                    <div className="w-10 h-5 rounded-full bg-green-500 relative mx-auto">
-                      <div className="w-3.5 h-3.5 bg-white rounded-full absolute top-0.75 left-5.5" />
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-center">
                     <button 
-                      onClick={() => handleEdit(product)}
-                      className="flex items-center gap-1 px-6 py-1.5 bg-[#00b4d8] text-white rounded-lg text-xs font-bold hover:bg-[#0096b1] transition-all mx-auto"
+                      onClick={() => toggleStock(product)}
+                      className={cn(
+                        "w-10 h-5 rounded-full transition-all relative mx-auto",
+                        product.isInStock ? "bg-green-500" : "bg-slate-300"
+                      )}
                     >
-                      Edit 
-                      <ChevronRight className="w-3 h-3" />
+                      <div className={cn(
+                        "w-3.5 h-3.5 bg-white rounded-full absolute top-0.75 transition-all shadow-sm",
+                        product.isInStock ? "left-5.5" : "left-1"
+                      )} />
                     </button>
                   </td>
+                  <td className="px-6 py-4 text-center">
+                    <div className="flex items-center justify-center gap-2">
+                      <button 
+                        onClick={() => handleEdit(product)}
+                        className="flex items-center gap-1 px-4 py-1.5 bg-[#00b4d8] text-white rounded-lg text-xs font-bold hover:bg-[#0096b1] transition-all"
+                      >
+                        Edit 
+                        <ChevronRight className="w-3 h-3" />
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setDeletingId(product.id);
+                          setPasscode('');
+                          setDeleteError(false);
+                        }}
+                        className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </td>
                 </tr>
-              ))}
+              )) : (
+                <tr>
+                   <td colSpan={6} className="px-6 py-12 text-center">
+                    <p className="text-slate-400 font-bold">No products found. Create or import your first product!</p>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Modals */}
+      <AnimatePresence>
+        {deletingId && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm"
+              onClick={() => setDeletingId(null)}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-8 space-y-6 text-center">
+                <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center mx-auto">
+                  <AlertTriangle className="w-8 h-8" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-xl font-bold text-slate-900">ยืนยันการลบตัวยา?</h3>
+                  <p className="text-slate-500 text-sm">
+                    กรุณาใส่รหัสผ่าน 999 เพื่อยืนยันการลบข้อมูลถาวร
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="relative">
+                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                    <input 
+                      type="password"
+                      placeholder="Enter passcode"
+                      value={passcode}
+                      onChange={(e) => {
+                        setPasscode(e.target.value);
+                        setDeleteError(false);
+                      }}
+                      className={cn(
+                        "w-full pl-10 pr-4 py-3 rounded-xl border outline-none font-bold text-center tracking-[0.5em] transition-all",
+                        deleteError ? "border-rose-300 ring-4 ring-rose-50" : "border-slate-100 focus:border-[#00b4d8]"
+                      )}
+                      autoFocus
+                    />
+                  </div>
+                  {deleteError && (
+                    <p className="text-rose-500 text-xs font-bold">Passcode ไม่ถูกต้อง!</p>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button 
+                    onClick={() => setDeletingId(null)}
+                    className="py-3 px-4 bg-slate-50 text-slate-600 rounded-xl font-bold hover:bg-slate-100 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={handleDelete}
+                    className="py-3 px-4 bg-rose-500 text-white rounded-xl font-bold hover:bg-rose-600 transition-all shadow-lg shadow-rose-100"
+                  >
+                    Delete Product
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {importSummary && importSummary.show && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setImportSummary(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 30 }}
+              className="relative bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-8 space-y-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xl font-bold text-slate-900">Import Result</h3>
+                  <p className="text-sm text-slate-400">สรุปการนำเข้าข้อมูล</p>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-slate-50 p-4 rounded-2xl text-center">
+                    <p className="text-xs text-slate-400 font-bold uppercase mb-1">Total</p>
+                    <p className="text-2xl font-bold text-slate-900">{importSummary.total}</p>
+                  </div>
+                  <div className="bg-emerald-50 p-4 rounded-2xl text-center border border-emerald-100">
+                    <p className="text-xs text-emerald-400 font-bold uppercase mb-1">Success</p>
+                    <p className="text-2xl font-bold text-emerald-600">{importSummary.success}</p>
+                  </div>
+                  <div className="bg-rose-50 p-4 rounded-2xl text-center border border-rose-100">
+                    <p className="text-xs text-rose-400 font-bold uppercase mb-1">Duplicate</p>
+                    <p className="text-2xl font-bold text-rose-600">{importSummary.duplicates.length}</p>
+                  </div>
+                </div>
+
+                {importSummary.duplicates.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-bold text-slate-500 uppercase">รายชื่อยาที่ซ้ำ (ไม่ถูกนำเข้า):</p>
+                    <div className="max-h-32 overflow-y-auto bg-slate-50 rounded-xl p-3 border border-slate-100">
+                      <ul className="text-xs text-slate-400 space-y-1">
+                        {importSummary.duplicates.map((name, i) => (
+                          <li key={i} className="flex items-center gap-2">
+                            <span className="w-1 h-1 bg-slate-300 rounded-full" />
+                            {name}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
+                <button 
+                  onClick={() => setImportSummary(null)}
+                  className="w-full py-4 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-all flex items-center justify-center gap-2"
+                >
+                  <CheckCircle2 className="w-5 h-5" />
+                  Got it
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

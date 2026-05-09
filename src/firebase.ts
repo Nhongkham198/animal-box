@@ -29,7 +29,8 @@ import {
   Timestamp,
   increment,
   serverTimestamp,
-  getDocs
+  getDocs,
+  writeBatch
 } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
@@ -155,6 +156,7 @@ export {
   getDocsFromServer,
   serverTimestamp,
   getDocs,
+  writeBatch,
   ref,
   uploadBytes,
   getDownloadURL

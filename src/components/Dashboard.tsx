@@ -80,6 +80,7 @@ export default function Dashboard() {
   const [uniquePatientsCount, setUniquePatientsCount] = useState(0);
   const [vaccinesCount, setVaccinesCount] = useState(0);
   const [patientsMap, setPatientsMap] = useState<Record<string, any>>({});
+  const [outOfStockItems, setOutOfStockItems] = useState<any[]>([]);
 
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -208,7 +209,8 @@ export default function Dashboard() {
           yesterdayApptsSnap,
           thisMonthOpdSnap,
           lastMonthOpdSnap,
-          salesSnap
+          salesSnap,
+          outOfStockSnap
         ] = await Promise.all([
           getDocs(collection(db, 'patients')).catch(e => { console.warn("Patients fetch denied (non-critical)", e); return { size: 0, docs: [] }; }),
           getDocs(collection(db, 'inventory')).catch(e => { console.warn("Inventory fetch denied (non-critical)", e); return { size: 0, docs: [] }; }),
@@ -216,8 +218,11 @@ export default function Dashboard() {
           getDocs(query(collection(db, 'appointments'), where('startTime', '>=', yesterdayStart), where('startTime', '<=', yesterdayEnd))).catch(e => { console.warn("Appointments (yesterday) fetch denied (non-critical)", e); return { size: 0, docs: [] }; }),
           getDocs(query(collection(db, 'opd_records'), where('dateVisit', '>=', thisMonthStart))).catch(e => { console.warn("OPD fetch denied (non-critical)", e); return { size: 0, docs: [] }; }),
           getDocs(query(collection(db, 'opd_records'), where('dateVisit', '>=', lastMonthStart), where('dateVisit', '<=', lastMonthEnd))).catch(e => { console.warn("OPD (last month) fetch denied (non-critical)", e); return { size: 0, docs: [] }; }),
-          getDocs(query(collection(db, 'sales'), orderBy('createdAt', 'desc'), limit(100))).catch(e => { console.warn("Sales fetch denied (non-critical)", e); return { size: 0, docs: [] }; })
+          getDocs(query(collection(db, 'sales'), orderBy('createdAt', 'desc'), limit(100))).catch(e => { console.warn("Sales fetch denied (non-critical)", e); return { size: 0, docs: [] }; }),
+          getDocs(query(collection(db, 'inventory'), where('isInStock', '==', false))).catch(e => { console.warn("Out of stock fetch denied (non-critical)", e); return { size: 0, docs: [] }; })
         ]) as any[];
+
+        setOutOfStockItems(outOfStockSnap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() })));
 
         // 1. Total Patients Trend
         const totalPatients = patientsSnap.size;
@@ -558,18 +563,22 @@ export default function Dashboard() {
 
           <Card title="Inventory Alerts">
             <div className="space-y-4">
-              {[
-                { item: 'Rabies Vaccine', stock: 5, min: 10 },
-                { item: 'Surgical Gloves', stock: 2, min: 20 },
-              ].map((item, i) => (
-                <div key={`alert-${item.item}-${i}`} className="flex items-center justify-between p-3 bg-amber-50 rounded-xl border border-amber-100">
-                  <div>
-                    <p className="text-sm font-bold text-slate-900">{item.item}</p>
-                    <p className="text-xs text-amber-600">Stock: {item.stock} (Min: {item.min})</p>
+              {outOfStockItems.length > 0 ? (
+                outOfStockItems.map((item, i) => (
+                  <div key={`out-stock-${item.id}-${i}`} className="flex items-center justify-between p-3 bg-rose-50 rounded-xl border border-rose-100 animate-pulse">
+                    <div>
+                      <p className="text-sm font-bold text-slate-900">{item.name}</p>
+                      <p className="text-xs text-rose-600 font-bold uppercase tracking-wider">Out of Stock (หมด)</p>
+                    </div>
+                    <AlertTriangle className="w-5 h-5 text-rose-500 fill-rose-500/10" />
                   </div>
-                  <AlertTriangle className="w-4 h-4 text-amber-500" />
+                ))
+              ) : (
+                <div className="py-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
+                  <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">All Items in Stock</p>
                 </div>
-              ))}
+              )}
             </div>
           </Card>
         </div>
