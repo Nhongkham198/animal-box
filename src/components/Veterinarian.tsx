@@ -101,7 +101,7 @@ export default function Veterinarian() {
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <h1 className="text-2xl font-bold text-slate-900 uppercase tracking-tight">Edit Staff / Veterinarian</h1>
+            <h1 className="text-2xl font-bold text-slate-900 uppercase tracking-tight">User Setting / Edit Staff</h1>
           </div>
           <div className="flex items-center gap-3">
             <button 
@@ -270,7 +270,7 @@ export default function Veterinarian() {
     <div className="space-y-6">
       {/* Header for List Mode */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-slate-900 uppercase tracking-tight">Staff & Veterinarian Management</h1>
+        <h1 className="text-2xl font-bold text-slate-900 uppercase tracking-tight">User Setting Management</h1>
         <div className="text-sm text-slate-400 font-bold">
           {users.length} Registered Users
         </div>

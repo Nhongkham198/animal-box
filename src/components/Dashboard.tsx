@@ -29,7 +29,7 @@ import {
   CreditCard,
   Package
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   BarChart, 
   Bar, 
@@ -81,6 +81,8 @@ export default function Dashboard() {
   const [vaccinesCount, setVaccinesCount] = useState(0);
   const [patientsMap, setPatientsMap] = useState<Record<string, any>>({});
   const [outOfStockItems, setOutOfStockItems] = useState<any[]>([]);
+  const [showStockModal, setShowStockModal] = useState(false);
+  const [hasAlertedThisSession, setHasAlertedThisSession] = useState(false);
 
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -219,10 +221,20 @@ export default function Dashboard() {
           getDocs(query(collection(db, 'opd_records'), where('dateVisit', '>=', thisMonthStart))).catch(e => { console.warn("OPD fetch denied (non-critical)", e); return { size: 0, docs: [] }; }),
           getDocs(query(collection(db, 'opd_records'), where('dateVisit', '>=', lastMonthStart), where('dateVisit', '<=', lastMonthEnd))).catch(e => { console.warn("OPD (last month) fetch denied (non-critical)", e); return { size: 0, docs: [] }; }),
           getDocs(query(collection(db, 'sales'), orderBy('createdAt', 'desc'), limit(100))).catch(e => { console.warn("Sales fetch denied (non-critical)", e); return { size: 0, docs: [] }; }),
-          getDocs(query(collection(db, 'inventory'), where('isInStock', '==', false))).catch(e => { console.warn("Out of stock fetch denied (non-critical)", e); return { size: 0, docs: [] }; })
+          getDocs(collection(db, 'inventory')).catch(e => { console.warn("Inventory fetch denied (non-critical)", e); return { size: 0, docs: [] }; })
         ]) as any[];
 
-        setOutOfStockItems(outOfStockSnap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() })));
+        const inventoryData = inventorySnap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+        const outOfStock = inventoryData.filter((item: any) => 
+          item.isInStock === false || (item.currentStock !== undefined && item.currentStock <= (item.minStock || 0))
+        );
+        setOutOfStockItems(outOfStock);
+
+        // Check for critical items to show modal
+        if (outOfStock.length > 0 && !hasAlertedThisSession) {
+          setShowStockModal(true);
+          setHasAlertedThisSession(true);
+        }
 
         // 1. Total Patients Trend
         const totalPatients = patientsSnap.size;
@@ -568,9 +580,20 @@ export default function Dashboard() {
                   <div key={`out-stock-${item.id}-${i}`} className="flex items-center justify-between p-3 bg-rose-50 rounded-xl border border-rose-100 animate-pulse">
                     <div>
                       <p className="text-sm font-bold text-slate-900">{item.name}</p>
-                      <p className="text-xs text-rose-600 font-bold uppercase tracking-wider">Out of Stock (หมด)</p>
+                      <div className="flex items-center gap-2">
+                        <p className={cn(
+                          "text-xs font-black uppercase tracking-wider",
+                          item.currentStock === 0 ? "text-rose-600" : "text-amber-600"
+                        )}>
+                          {item.currentStock === 0 ? "Out of Stock (หมด)" : `Low Stock: ${item.currentStock}`}
+                        </p>
+                        <span className="text-[10px] text-slate-400 font-bold tracking-tighter">(Min: {item.minStock || 0})</span>
+                      </div>
                     </div>
-                    <AlertTriangle className="w-5 h-5 text-rose-500 fill-rose-500/10" />
+                    <AlertTriangle className={cn(
+                      "w-5 h-5",
+                      item.currentStock === 0 ? "text-rose-500 fill-rose-500/10" : "text-amber-500 fill-amber-500/10"
+                    )} />
                   </div>
                 ))
               ) : (
@@ -593,6 +616,91 @@ export default function Dashboard() {
         isOpen={isAddAppointmentModalOpen} 
         onClose={() => setIsAddAppointmentModalOpen(false)} 
       />
+
+      <AnimatePresence>
+        {showStockModal && outOfStockItems.length > 0 && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 text-left">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowStockModal(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8 space-y-6">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center animate-bounce shadow-inner">
+                    <AlertTriangle className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-slate-900 tracking-tight leading-tight">CRITICAL STOCK INFO!</h3>
+                    <p className="text-sm text-slate-400 font-bold">ยาบางรายการใกล้หมดหรือหมดแล้ว</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3 max-h-60 overflow-y-auto px-1">
+                  {outOfStockItems.map((item, i) => (
+                    <div key={`modal-alert-${item.id}-${i}`} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 group hover:bg-rose-50 hover:border-rose-100 transition-all cursor-default">
+                      <div className="flex items-center gap-3">
+                        <div className={cn(
+                          "w-2 h-2 rounded-full",
+                          item.currentStock === 0 ? "bg-rose-500 animate-ping" : "bg-amber-500"
+                        )} />
+                        <div>
+                          <p className="text-[15px] font-black text-slate-800">{item.name}</p>
+                          <p className="text-[11px] text-slate-400 font-bold uppercase tracking-tight">
+                            QTY: <span className={cn(item.currentStock === 0 ? "text-rose-500" : "text-amber-500")}>
+                                {item.currentStock}
+                              </span> 
+                            <span className="mx-1">/</span> 
+                            MIN: {item.minStock || 0}
+                          </p>
+                        </div>
+                      </div>
+                      <span className={cn(
+                        "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                        item.currentStock === 0 ? "bg-rose-100 text-rose-500" : "bg-amber-100 text-amber-500"
+                      )}>
+                        {item.currentStock === 0 ? "EMPTY" : "LOW"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  <button 
+                    onClick={() => setShowStockModal(false)}
+                    className="py-4 px-4 bg-slate-100 text-slate-500 rounded-2xl font-black hover:bg-slate-200 transition-all uppercase text-xs tracking-widest"
+                  >
+                    Close
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setShowStockModal(false);
+                      // In this app, navigation is likely handled by tab/mode state in App.tsx
+                      // Since we can't easily trigger a state change in parent App.tsx here without props,
+                      // we'll assume the user can navigate via the sidebar link.
+                      // However, to be more helpful, we'll try to set a flag in storage.
+                      localStorage.setItem('redirect_to_product', 'true');
+                      // Most AI Studio templates use a central "activeTab" in App.tsx
+                    }}
+                    className="py-4 px-4 bg-slate-900 text-white rounded-2xl font-black hover:bg-black transition-all shadow-xl shadow-slate-200 uppercase text-xs tracking-widest flex items-center justify-center gap-2"
+                  >
+                    Update Stock
+                    <ArrowUpRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

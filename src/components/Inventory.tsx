@@ -39,13 +39,24 @@ import { cn } from '../lib/utils';
 
 interface InventoryItem {
   id: string;
-  itemName: string;
+  name?: string;
+  itemName?: string;
+  type?: string;
+  unit?: string;
+  unitPrice?: number;
+  initialStock?: number;
+  currentStock?: number;
+  minStock?: number;
   barcode?: string;
-  quantity: number;
-  unitPrice: number;
-  minStock: number;
   category?: string;
+  isInStock: boolean;
 }
+
+const STOCK_LEVELS = {
+  EMPTY: { label: 'Out of Stock', color: 'text-rose-500', bg: 'bg-rose-50', border: 'border-rose-100' },
+  LOW: { label: 'Low Stock', color: 'text-amber-500', bg: 'bg-amber-50', border: 'border-amber-100' },
+  NORMAL: { label: 'In Stock', color: 'text-emerald-500', bg: 'bg-emerald-50', border: 'border-emerald-100' }
+};
 
 export default function Inventory() {
   const throwError = useAsyncError();
@@ -54,7 +65,11 @@ export default function Inventory() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [activeCategory, setActiveCategory] = useState<string>('All');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Categories based on the requested screenshot
+  const categories = ['All', 'Anti-parasite', 'Vaccine', 'Medicine', 'Supplies', 'Food', 'Other'];
 
   // Import Result State
   const [importSummary, setImportSummary] = useState<{
@@ -76,19 +91,20 @@ export default function Inventory() {
     category: 'Medicine'
   });
 
+  // Sync with Firestore
   useEffect(() => {
     if (!isAuthReady || !user || !isStaff) {
       if (isAuthReady && !isStaff) setLoading(false);
       return;
     }
 
-    const q = query(collection(db, 'inventory'), orderBy('itemName', 'asc'));
+    const q = query(collection(db, 'inventory'), orderBy('name', 'asc'));
     const unsubscribe = onSnapshot(q, (snap) => {
       const inv = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as InventoryItem));
       setItems(inv);
       setLoading(false);
     }, (err) => {
-      console.warn("Inventory listener (non-critical):", err);
+      console.warn("Inventory listener:", err);
       handleFirestoreError(err, OperationType.LIST, 'inventory');
     });
     return () => unsubscribe();
@@ -98,7 +114,16 @@ export default function Inventory() {
     e.preventDefault();
     try {
       await addDoc(collection(db, 'inventory'), {
-        ...newItem,
+        name: newItem.itemName,
+        itemName: newItem.itemName,
+        barcode: newItem.barcode,
+        currentStock: newItem.quantity,
+        initialStock: newItem.quantity,
+        unitPrice: newItem.unitPrice,
+        minStock: newItem.minStock,
+        type: newItem.category,
+        category: newItem.category,
+        isInStock: true,
         createdAt: Timestamp.now()
       }).catch(err => {
         handleFirestoreError(err, OperationType.CREATE, 'inventory');
@@ -118,27 +143,24 @@ export default function Inventory() {
     }
   };
 
-  const updateQuantity = async (id: string, delta: number) => {
-    const item = items.find(i => i.id === id);
-    if (!item) return;
-    try {
-      await updateDoc(doc(db, 'inventory', id), {
-        quantity: Math.max(0, item.quantity + delta)
-      }).catch(err => {
-        handleFirestoreError(err, OperationType.UPDATE, `inventory/${id}`);
-      });
-    } catch (error) {
-      console.error("Error updating quantity:", error);
-      throwError(error);
-    }
+  const getStockStatus = (item: InventoryItem) => {
+    const current = item.currentStock || 0;
+    const min = item.minStock || 0;
+    if (current === 0 || item.isInStock === false) return STOCK_LEVELS.EMPTY;
+    if (current <= min) return STOCK_LEVELS.LOW;
+    return STOCK_LEVELS.NORMAL;
   };
 
-  const filteredItems = items.filter(i => 
-    i.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (i.barcode && i.barcode.includes(searchQuery))
-  );
+  const filteredItems = items.filter(i => {
+    const matchesSearch = (i.name || i.itemName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         (i.barcode && i.barcode.includes(searchQuery));
+    const matchesCategory = activeCategory === 'All' || 
+                           (i.type || i.category) === activeCategory;
+    return matchesSearch && matchesCategory;
+  });
 
-  const lowStockCount = items.filter(i => i.quantity <= i.minStock).length;
+  const lowStockCount = items.filter(i => (i.currentStock || 0) <= (i.minStock || 0)).length;
+  const totalValue = items.reduce((acc, item) => acc + ((item.currentStock || 0) * (item.unitPrice || 0)), 0);
 
   const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -201,11 +223,16 @@ export default function Inventory() {
             // Not a duplicate -> Add to DB
             try {
               await addDoc(collection(db, 'inventory'), {
+                name: fullItemName,
                 itemName: fullItemName,
                 category: category,
+                type: category,
                 unitPrice: price,
-                quantity: 0, // Default to 0 stock
-                minStock: 10, // Default alert level
+                currentStock: 0,
+                initialStock: 0,
+                quantity: 0,
+                minStock: 10,
+                isInStock: true,
                 createdAt: Timestamp.now()
               });
               successCount++;
@@ -235,56 +262,83 @@ export default function Inventory() {
   };
 
   return (
-    <div className="h-full flex flex-col gap-8">
-      {/* Header & Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600">
-            <Package className="w-6 h-6" />
+    <div className="h-full flex flex-col gap-8 pb-10">
+      {/* Header & Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm flex flex-col justify-between group hover:border-[#00b4d8]/30 transition-all">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-12 h-12 bg-[#00b4d8]/10 rounded-2xl flex items-center justify-center text-[#00b4d8]">
+              <Package className="w-6 h-6" />
+            </div>
+            <span className="text-[10px] bg-slate-100 text-slate-400 px-2 py-1 rounded-lg font-black uppercase tracking-widest">Total</span>
           </div>
           <div>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Items</p>
-            <p className="text-2xl font-bold text-slate-900">{items.length}</p>
+            <p className="text-3xl font-black text-slate-900 leading-none">{items.length}</p>
+            <p className="text-xs font-bold text-slate-400 mt-2 uppercase tracking-tight">Active Inventory Items</p>
           </div>
         </div>
-        <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-600">
-            <AlertTriangle className="w-6 h-6" />
+
+        <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm flex flex-col justify-between group hover:border-amber-200 transition-all">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-500">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            {lowStockCount > 0 && <span className="flex h-2 w-2 rounded-full bg-amber-500 animate-ping" />}
           </div>
           <div>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Low Stock</p>
-            <p className="text-2xl font-bold text-slate-900">{lowStockCount}</p>
+            <p className="text-3xl font-black text-slate-900 leading-none">{lowStockCount}</p>
+            <p className="text-xs font-bold text-amber-500 mt-2 uppercase tracking-tight">Requires Attention (Low)</p>
           </div>
         </div>
-        <div className="bg-indigo-600 p-6 rounded-3xl text-white shadow-xl shadow-indigo-100 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center">
-              <ShoppingCart className="w-6 h-6" />
+
+        <div className="md:col-span-2 bg-[#00b4d8] p-8 rounded-[2.5rem] text-white shadow-2xl shadow-[#00b4d8]/20 flex items-center justify-between relative overflow-hidden">
+          <div className="relative z-10 flex items-center gap-6">
+            <div className="w-16 h-16 bg-white/20 backdrop-blur-md rounded-3xl flex items-center justify-center border border-white/20">
+              <ShoppingCart className="w-8 h-8 text-white" />
             </div>
             <div>
-              <p className="text-xs font-bold uppercase tracking-widest opacity-60">Inventory Value</p>
-              <p className="text-2xl font-bold">฿124,500</p>
+              <p className="text-white/70 text-xs font-black uppercase tracking-widest mb-1">Total Inventory Value</p>
+              <p className="text-4xl font-black tabular-nums">฿{totalValue.toLocaleString()}</p>
+              <p className="text-white/50 text-[10px] font-bold mt-1 uppercase tracking-tighter">*Calculated from Current Stock x Unit Price</p>
             </div>
           </div>
-          <button onClick={() => setIsModalOpen(true)} className="bg-white text-indigo-600 p-2 rounded-xl hover:bg-indigo-50 transition-all">
-            <Plus className="w-5 h-5" />
-          </button>
+          <div className="absolute -right-10 -bottom-10 opacity-10">
+            <Package className="w-48 h-48" />
+          </div>
         </div>
       </div>
 
-      {/* Controls */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="bg-white p-2 rounded-2xl border border-slate-200 flex items-center gap-2 w-80">
-          <Search className="w-4 h-4 text-slate-400 ml-2" />
-          <input 
-            type="text" 
-            placeholder="Search inventory..." 
-            className="bg-transparent border-none focus:ring-0 text-sm w-full"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-          />
+      {/* Controls & Search */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+        <div className="flex items-center gap-1 bg-slate-100 p-1.5 rounded-2xl w-full lg:w-fit overflow-x-auto no-scrollbar">
+          {categories.map((cat) => (
+            <button
+              key={cat}
+              onClick={() => setActiveCategory(cat)}
+              className={cn(
+                "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap",
+                activeCategory === cat 
+                  ? "bg-white text-[#00b4d8] shadow-sm" 
+                  : "text-slate-400 hover:text-slate-600"
+              )}
+            >
+              {cat}
+            </button>
+          ))}
         </div>
-        <div className="flex items-center gap-3">
+
+        <div className="flex items-center gap-4">
+          <div className="bg-white px-5 py-3 rounded-2xl border border-slate-200 flex items-center gap-3 w-full lg:w-80 group focus-within:border-[#00b4d8] transition-all">
+            <Search className="w-4 h-4 text-slate-400" />
+            <input 
+              type="text" 
+              placeholder="Search by Name or Barcode..." 
+              className="bg-transparent border-none focus:ring-0 text-sm font-bold text-slate-700 w-full placeholder:text-slate-300"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+            />
+          </div>
+          
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -295,107 +349,126 @@ export default function Inventory() {
           <button 
             onClick={() => fileInputRef.current?.click()}
             disabled={isImporting}
-            className="flex items-center gap-2 px-6 py-3 bg-indigo-50 border border-indigo-100 rounded-2xl text-indigo-600 font-black text-xs uppercase tracking-widest hover:bg-indigo-100 transition-all shadow-sm disabled:opacity-50"
+            className="flex items-center gap-2 px-6 py-3.5 bg-indigo-50 border border-indigo-100 rounded-2xl text-indigo-600 font-black text-xs uppercase tracking-widest hover:bg-indigo-100 transition-all shadow-sm disabled:opacity-50"
           >
             {isImporting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
-            Import Excel
+            Import
           </button>
-          <button className="flex items-center gap-2 px-4 py-3 bg-white border border-slate-200 rounded-2xl text-slate-600 font-bold text-xs uppercase tracking-widest hover:bg-slate-50 transition-all">
-            <Filter className="w-4 h-4" />
-            Category
+          
+          <button 
+            onClick={() => setIsModalOpen(true)}
+            className="flex items-center gap-2 px-6 py-3.5 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-black transition-all shadow-xl shadow-slate-200"
+          >
+            <Plus className="w-4 h-4" />
+            New Item
           </button>
         </div>
       </div>
 
-      {/* Inventory List */}
-      <div className="flex-1 bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col">
-        <div className="p-6 border-b border-slate-100 grid grid-cols-12 text-xs font-bold text-slate-400 uppercase tracking-widest">
-          <div className="col-span-3">Item Name</div>
-          <div className="col-span-2">Barcode</div>
-          <div className="col-span-1">Category</div>
-          <div className="col-span-2 text-center">Stock Level</div>
-          <div className="col-span-2 text-right">Unit Price</div>
-          <div className="col-span-2 text-right">Actions</div>
+      {/* Main Inventory Layout */}
+      <div className="flex-1 bg-white rounded-[3rem] border border-slate-100 shadow-sm overflow-hidden flex flex-col">
+        <div className="p-8 border-b border-slate-100 grid grid-cols-12 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] bg-slate-50/50">
+          <div className="col-span-4">Item Identification</div>
+          <div className="col-span-2 text-center">Price / Unit</div>
+          <div className="col-span-4 px-10 text-center">Stock Overview (Initial vs Current)</div>
+          <div className="col-span-2 text-right">Status</div>
         </div>
 
         <div className="flex-1 overflow-y-auto">
           {loading ? (
-            <div className="p-20 text-center text-slate-400">Loading inventory...</div>
+            <div className="p-20 text-center flex flex-col items-center gap-4">
+              <RefreshCw className="w-8 h-8 text-[#00b4d8] animate-spin" />
+              <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Synchronizing Stocks...</p>
+            </div>
           ) : filteredItems.length > 0 ? (
             <div className="divide-y divide-slate-50">
-              {filteredItems.map((item) => (
-                <div key={item.id} className="p-6 grid grid-cols-12 items-center hover:bg-slate-50/50 transition-all group">
-                  <div className="col-span-3 flex items-center gap-3">
-                    <div className={cn(
-                      "w-10 h-10 rounded-xl flex items-center justify-center shadow-sm",
-                      item.quantity <= item.minStock ? "bg-amber-50 text-amber-600" : "bg-slate-50 text-slate-600"
-                    )}>
-                      <Package className="w-5 h-5" />
+              {filteredItems.map((item) => {
+                const status = getStockStatus(item);
+                const progress = Math.min(100, Math.max(0, ((item.currentStock || 0) / (item.initialStock || 1)) * 100));
+                
+                return (
+                  <div key={item.id} className="p-8 grid grid-cols-12 items-center hover:bg-slate-50/20 transition-all group">
+                    <div className="col-span-4 flex items-center gap-5">
+                      <div className={cn(
+                        "w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner relative transition-transform group-hover:scale-105",
+                        status.bg, status.color
+                      )}>
+                        <Package className="w-6 h-6" />
+                        {item.currentStock === 0 && <XCircle className="w-4 h-4 absolute -top-1 -right-1 fill-white" />}
+                      </div>
+                      <div>
+                        <p className="text-lg font-black text-slate-800 leading-tight mb-1">{item.name || item.itemName}</p>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md uppercase tracking-tighter">
+                            {item.type || item.category || 'General'}
+                          </span>
+                          {item.barcode && (
+                            <span className="text-[10px] font-mono text-slate-300">#{item.barcode}</span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-bold text-slate-900">{item.itemName}</p>
-                      {item.quantity <= item.minStock && (
-                        <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" /> Low Stock
-                        </p>
-                      )}
+
+                    <div className="col-span-2 text-center">
+                      <p className="text-xl font-black text-slate-700 tabular-nums">฿{(item.unitPrice || 0).toLocaleString()}</p>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase">per {item.unit || 'unit'}</p>
+                    </div>
+
+                    <div className="col-span-4 px-10">
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between text-[11px] font-black uppercase tracking-tight">
+                          <div className="flex flex-col">
+                            <span className="text-slate-400">Current QTY</span>
+                            <span className={cn("text-lg", status.color)}>{(item.currentStock || 0).toLocaleString()}</span>
+                          </div>
+                          <div className="flex flex-col text-right">
+                            <span className="text-slate-300">Initial Stock</span>
+                            <span className="text-lg text-slate-900/40">{(item.initialStock || 0).toLocaleString()}</span>
+                          </div>
+                        </div>
+                        <div className="h-3 bg-slate-100 rounded-full overflow-hidden shadow-inner flex">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${progress}%` }}
+                            className={cn(
+                              "h-full rounded-full transition-all duration-1000",
+                              status.color.replace('text-', 'bg-')
+                            )}
+                          />
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-300">
+                          <span>0%</span>
+                          <span className="text-slate-400">Target Range: {(item.minStock || 0)}+</span>
+                          <span>100%</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="col-span-2 text-right">
+                      <div className={cn(
+                        "inline-flex flex-col items-end px-4 py-3 rounded-2xl border transition-all",
+                        status.bg, status.border, status.color
+                      )} title={item.currentStock === 0 ? "Out of Stock" : "Current Status"}>
+                        <span className="text-[10px] font-black uppercase tracking-[0.1em] leading-none mb-1">{status.label}</span>
+                        <div className="flex items-center gap-2">
+                          {(item.currentStock || 0) <= (item.minStock || 0) && <AlertTriangle className="w-3 h-3 animate-pulse" />}
+                          <span className="text-xs font-bold whitespace-nowrap">
+                            {item.currentStock === 0 ? 'PLEASE RESTOCK' : `${progress.toFixed(0)}% Utilized`}
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  <div className="col-span-2">
-                    <span className="text-xs font-mono text-slate-400">
-                      {item.barcode || '-'}
-                    </span>
-                  </div>
-                  <div className="col-span-1">
-                    <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-1 rounded-lg">
-                      {item.category || 'General'}
-                    </span>
-                  </div>
-                  <div className="col-span-2 flex flex-col items-center gap-2">
-                    <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                      <div 
-                        className={cn(
-                          "h-full rounded-full transition-all",
-                          item.quantity <= item.minStock ? "bg-amber-500" : "bg-indigo-500"
-                        )}
-                        style={{ width: `${Math.min(100, (item.quantity / (item.minStock * 2)) * 100)}%` }}
-                      />
-                    </div>
-                    <p className="text-sm font-bold text-slate-900">{item.quantity} units</p>
-                  </div>
-                  <div className="col-span-2 text-right">
-                    <p className="font-bold text-slate-900">฿{item.unitPrice.toLocaleString()}</p>
-                  </div>
-                  <div className="col-span-2 text-right flex items-center justify-end gap-2">
-                    <button 
-                      onClick={() => updateQuantity(item.id, -1)}
-                      className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-red-500 transition-all"
-                    >
-                      <ArrowDownRight className="w-4 h-4" />
-                    </button>
-                    <button 
-                      onClick={() => updateQuantity(item.id, 1)}
-                      className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-emerald-500 transition-all"
-                    >
-                      <ArrowUpRight className="w-4 h-4" />
-                    </button>
-                    <button className="p-2 hover:bg-slate-100 rounded-lg text-slate-400">
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
-            <div className="p-20 flex flex-col items-center justify-center text-center">
-              <img 
-                src="https://illustrations.popsy.co/amber/box.svg" 
-                alt="No Items"
-                className="w-48 h-48 opacity-40 mb-4"
-                referrerPolicy="no-referrer"
-              />
-              <p className="text-slate-500 font-medium">No items in inventory</p>
-              <p className="text-sm text-slate-400">Add medicines or supplies to track stock levels.</p>
+            <div className="py-32 flex flex-col items-center justify-center text-center px-10">
+              <div className="w-24 h-24 bg-slate-50 rounded-[2rem] flex items-center justify-center mb-6">
+                <Package className="w-12 h-12 text-slate-200" />
+              </div>
+              <h3 className="text-xl font-black text-slate-900 mb-2 uppercase tracking-tight">Inventory Empty</h3>
+              <p className="text-slate-400 max-w-sm font-medium">ไม่พบรายการครุภัณฑ์ยาหรืออุปกณ์ที่คุณค้นหา กรุณาเพิ่มรายการใหม่หรือตรวจสอบคำค้นหา</p>
             </div>
           )}
         </div>

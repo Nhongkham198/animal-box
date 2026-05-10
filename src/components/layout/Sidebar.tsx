@@ -89,7 +89,7 @@ export default function Sidebar({
       icon: Settings,
       subItems: [
         { id: 'settings-hospital', label: 'Hospital Profile' },
-        { id: 'settings-vet', label: 'Veterinarian' },
+        { id: 'settings-vet', label: 'User Setting' },
         { id: 'settings-contact', label: 'Contact Setting' },
         { id: 'settings-activities', label: 'Activities Setting' },
         { id: 'settings-reward', label: 'Reward Setting' },

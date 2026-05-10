@@ -40,6 +40,9 @@ interface Product {
   name: string;
   type: string;
   unit: string;
+  currentStock: number;
+  initialStock: number;
+  minStock: number;
   isInStock: boolean;
   productType?: string;
   genericName?: string;
@@ -49,13 +52,13 @@ interface Product {
 }
 
 const initialProducts: Product[] = [
-  { id: '1', name: 'Advocate <4 kg cat', type: 'Anti-parasite', unit: 'หลอด', isInStock: true },
-  { id: '2', name: 'Advocate <4 kg Dog', type: 'Anti-parasite', unit: 'หลอด', isInStock: true },
-  { id: '3', name: 'Advocate 10-25 kg Dog', type: 'Anti-parasite', unit: 'หลอด', isInStock: true },
-  { id: '4', name: 'Advocate 25-40 kg Dog', type: 'Anti-parasite', unit: 'หลอด', isInStock: true },
-  { id: '5', name: 'Advocate 4-10 kg Dog', type: 'Anti-parasite', unit: 'หลอด', isInStock: true },
-  { id: '6', name: 'Advocate 4-8 kg Cat', type: 'Anti-parasite', unit: 'หลอด', isInStock: true },
-  { id: '7', name: 'Bayovac® DHPPi+L', type: 'Vaccine', unit: 'ขวด', isInStock: true },
+  { id: '1', name: 'Advocate <4 kg cat', type: 'Anti-parasite', unit: 'หลอด', isInStock: true, currentStock: 0, initialStock: 0, minStock: 5 },
+  { id: '2', name: 'Advocate <4 kg Dog', type: 'Anti-parasite', unit: 'หลอด', isInStock: true, currentStock: 0, initialStock: 0, minStock: 5 },
+  { id: '3', name: 'Advocate 10-25 kg Dog', type: 'Anti-parasite', unit: 'หลอด', isInStock: true, currentStock: 0, initialStock: 0, minStock: 5 },
+  { id: '4', name: 'Advocate 25-40 kg Dog', type: 'Anti-parasite', unit: 'หลอด', isInStock: true, currentStock: 0, initialStock: 0, minStock: 5 },
+  { id: '5', name: 'Advocate 4-10 kg Dog', type: 'Anti-parasite', unit: 'หลอด', isInStock: true, currentStock: 0, initialStock: 0, minStock: 5 },
+  { id: '6', name: 'Advocate 4-8 kg Cat', type: 'Anti-parasite', unit: 'หลอด', isInStock: true, currentStock: 0, initialStock: 0, minStock: 5 },
+  { id: '7', name: 'Bayovac® DHPPi+L', type: 'Vaccine', unit: 'ขวด', isInStock: true, currentStock: 0, initialStock: 0, minStock: 5 },
 ];
 
 const PRODUCT_TYPES = ['Anti-parasite', 'Vaccine', 'Medicine', 'Supplies', 'Food', 'Other'];
@@ -113,6 +116,9 @@ export default function ProductSetting() {
       productType: '',
       unit: '',
       barcode: '',
+      initialStock: 0,
+      currentStock: 0,
+      minStock: 5,
       valueGroup: 'low',
       safetyStock: 0,
       leadTime: 0,
@@ -158,31 +164,34 @@ export default function ProductSetting() {
       id: product.id,
       name: product.name,
       type: 'product',
-      genericName: '',
+      genericName: product.genericName || '',
       productType: product.type,
       unit: product.unit,
-      barcode: '',
-      valueGroup: 'low',
-      safetyStock: 0,
-      leadTime: 0,
-      maxStock: 0,
-      activityGroup: '',
-      activitySubGroup: '',
-      petTypes: [],
-      printGroup: '',
-      price: 0,
-      status: {
+      initialStock: product.initialStock || 0,
+      currentStock: product.currentStock || 0,
+      minStock: product.minStock || 0,
+      barcode: product.barcode || '',
+      valueGroup: product.valueGroup || 'low',
+      safetyStock: product.safetyStock || 0,
+      leadTime: product.leadTime || 0,
+      maxStock: product.maxStock || 0,
+      activityGroup: product.activityGroup || '',
+      activitySubGroup: product.activitySubGroup || '',
+      petTypes: product.petTypes || [],
+      printGroup: product.printGroup || '',
+      price: product.price || 0,
+      status: product.status || {
         appoint: { active: true, favorite: false },
         opd: { active: true, favorite: false },
         pos: { active: false, favorite: false },
       },
-      vat: 'none',
-      stockSetting: {
+      vat: product.vat || 'none',
+      stockSetting: product.stockSetting || {
         name: product.name,
         amount: 0.01,
         showInReceipt: true
       },
-      drugLabel: {
+      drugLabel: product.drugLabel || {
         enabled: true,
         medicalUse: '',
         position: '',
@@ -292,7 +301,9 @@ export default function ProductSetting() {
           for (const row of rows) {
             const name = String(row[0] || '').trim();
             const type = String(row[1] || 'Other').trim();
-            const unit = String(row[2] || 'Unit').trim();
+            const unitRaw = row[2] !== undefined ? String(row[2]).trim() : '';
+            // For price/unit column, we want to try and extract the number if possible
+            const unit = unitRaw.includes(',') ? unitRaw.replace(/,/g, '') : unitRaw;
 
             if (!name) continue;
             totalItems++;
@@ -475,14 +486,44 @@ export default function ProductSetting() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">Barcode</label>
-                <input 
-                  type="text"
-                  value={editingProduct.barcode}
-                  onChange={(e) => setEditingProduct({ ...editingProduct, barcode: e.target.value })}
-                  className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 focus:ring-2 focus:ring-[#00b4d8] outline-none font-medium"
-                />
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Barcode</label>
+                  <input 
+                    type="text"
+                    value={editingProduct.barcode}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, barcode: e.target.value })}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-medium"
+                    placeholder="Scan or enter barcode"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">จำนวนเริ่มต้น (Initial)</label>
+                  <input 
+                    type="number"
+                    value={editingProduct.initialStock}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, initialStock: parseInt(e.target.value) || 0 })}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-medium text-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">จำนวนคงเหลือ (Stock QTY)</label>
+                  <input 
+                    type="number"
+                    value={editingProduct.currentStock}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, currentStock: parseInt(e.target.value) || 0 })}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-medium text-[#00b4d8]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">จุดแจ้งเตือน (Min Alert)</label>
+                  <input 
+                    type="number"
+                    value={editingProduct.minStock}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, minStock: parseInt(e.target.value) || 0 })}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-medium text-rose-500"
+                  />
+                </div>
               </div>
 
               <div className="flex items-center gap-8">
@@ -1136,7 +1177,8 @@ export default function ProductSetting() {
                 <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-center w-20">No.</th>
                 <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider">Product Name</th>
                 <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-center">Type</th>
-                <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-center">Unit</th>
+                <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-right pr-12">ราคา(บาท)</th>
+                <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-right pr-10 text-[#00b4d8]">QTY</th>
                 <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-center">Is in Stock</th>
                 <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-center">Edit</th>
               </tr>
@@ -1156,7 +1198,24 @@ export default function ProductSetting() {
                     <div className="font-bold text-slate-700">{product.name}</div>
                   </td>
                   <td className="px-6 py-4 text-center text-slate-700 font-medium">{product.type}</td>
-                  <td className="px-6 py-4 text-center text-slate-700 font-medium">{product.unit}</td>
+                  <td className="px-6 py-4 text-right pr-12">
+                    <div className="font-black text-slate-800 text-base tabular-nums">
+                      {Number(product.unit || 0).toLocaleString()}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-right pr-10">
+                    <div className="flex flex-col items-end">
+                      <span className={cn(
+                        "text-sm font-black tabular-nums",
+                        (product.currentStock || 0) <= (product.minStock || 0) ? "text-rose-500" : "text-[#00b4d8]"
+                      )}>
+                        {(product.currentStock || 0).toLocaleString()}
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter tabular-nums">
+                        Min: {(product.minStock || 0).toLocaleString()}
+                      </span>
+                    </div>
+                  </td>
                   <td className="px-6 py-4 text-center">
                     <button 
                       onClick={() => toggleStock(product)}
