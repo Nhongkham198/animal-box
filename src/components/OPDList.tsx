@@ -828,15 +828,96 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
     }
   };
 
+  const generateRxText = (items: any[]) => {
+    if (!items || items.length === 0) return '';
+    return items.map((item: any, index: number) => {
+      const parts: string[] = [];
+      const nameAndQty = `${item.name} (${item.quantity} ${item.unit || 'หน่วย'})`;
+      
+      const isEye = item.category === 'Eye' || item.type === 'Eye' || (item.name && item.name.toLowerCase().includes('eye'));
+      const dosageStr = item.dosage ? `ครั้งละ ${item.dosage} ${item.unit || 'หน่วย'}` : '';
+      
+      let mainInstruction = '';
+      if (item.woundCare) {
+        mainInstruction = `ทำแผล${item.woundCareDescription ? `: ${item.woundCareDescription}` : ''}`;
+      } else {
+        let usage = item.usageMethod || (isEye ? 'หยอดตา' : 'กิน');
+        if (isEye && item.usageLocation) {
+          usage = `${usage} (${item.usageLocation})`;
+        }
+        mainInstruction = `${usage} ${dosageStr}`.trim();
+      }
+      
+      if (mainInstruction) {
+        parts.push(mainInstruction);
+      }
+      
+      if (item.frequency) {
+        const slots: string[] = [];
+        if (item.frequency.morning) slots.push('เช้า');
+        if (item.frequency.noon) slots.push('กลางวัน');
+        if (item.frequency.evening) slots.push('เย็น');
+        if (item.frequency.bedtime) slots.push('ก่อนนอน');
+        if (slots.length > 0) {
+          parts.push(slots.join(', '));
+        }
+      }
+      
+      if (item.interval && item.interval !== 'ไม่มีระบุ') {
+        parts.push(item.interval);
+      }
+      
+      if (item.timingMeal && !item.woundCare) {
+        let mealText = '';
+        if (item.timingMeal === 'Before') mealText = 'ก่อนอาหาร (Before Meal)';
+        else if (item.timingMeal === 'After') mealText = 'หลังอาหาร (After Meal)';
+        else if (item.timingMeal === 'With') mealText = 'พร้อมอาหาร (With Meal)';
+        else if (item.timingMeal === 'Other') mealText = 'กินตามเวลา';
+        if (mealText) {
+          parts.push(mealText);
+        }
+      }
+      
+      if (item.timingDetail) {
+        parts.push(item.timingDetail);
+      }
+      
+      const conditionWarnings: string[] = [];
+      if (item.refrigerate) {
+        conditionWarnings.push('เก็บในตู้เย็น');
+      }
+      if (item.shake) {
+        conditionWarnings.push('เขย่าขวดก่อนใช้');
+      }
+      if (item.onCondition) {
+        conditionWarnings.push('เมื่อมีอาการ');
+      }
+      if (item.purpose) {
+        conditionWarnings.push(`สรรพคุณ: ${item.purpose}`);
+      }
+      
+      if (conditionWarnings.length > 0) {
+        parts.push(`(${conditionWarnings.join(', ')})`);
+      }
+      
+      return `${index + 1}. ${nameAndQty} - ${parts.join(' ')}`;
+    }).join('\n');
+  };
+
   const addItem = () => {
     if (!newItem.name) return;
     const itemToAdd = { ...newItem, id: crypto.randomUUID(), price: newItem.price || 0, petId: targetPetId };
 
     if (targetPetId === newRecord.patientId) {
-      setNewRecord((prev: any) => ({
-        ...prev,
-        items: [...(prev.items || []), itemToAdd]
-      }));
+      setNewRecord((prev: any) => {
+        const nextItems = [...(prev.items || []), itemToAdd];
+        const nextRx = generateRxText(nextItems);
+        return {
+          ...prev,
+          items: nextItems,
+          recipereRx: nextRx
+        };
+      });
     } else {
       setMergedBillingRecords(prev => prev.map(r => 
         r.patientId === targetPetId 
@@ -872,18 +953,28 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
 
   const editItem = (item: any) => {
     setNewItem({ ...item });
-    setNewRecord((prev: any) => ({
-      ...prev,
-      items: prev.items.filter((i: any) => i.id !== item.id)
-    }));
+    setNewRecord((prev: any) => {
+      const nextItems = (prev.items || []).filter((i: any) => i.id !== item.id);
+      const nextRx = generateRxText(nextItems);
+      return {
+        ...prev,
+        items: nextItems,
+        recipereRx: nextRx
+      };
+    });
   };
 
   const removeItem = (id: string, petId: string) => {
     if (petId === newRecord.patientId) {
-      setNewRecord((prev: any) => ({
-        ...prev,
-        items: prev.items.filter((item: any) => item.id !== id)
-      }));
+      setNewRecord((prev: any) => {
+        const nextItems = (prev.items || []).filter((item: any) => item.id !== id);
+        const nextRx = generateRxText(nextItems);
+        return {
+          ...prev,
+          items: nextItems,
+          recipereRx: nextRx
+        };
+      });
     } else {
       setMergedBillingRecords(prev => prev.map(r => 
         r.patientId === petId 
@@ -2335,10 +2426,9 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                   </div>
 
                                   <div 
-                                    className="relative aspect-[4/3] bg-white rounded-xl border border-slate-100 shadow-sm group cursor-zoom-in overflow-hidden"
-                                    onClick={() => setIsAnatomyZoomed(true)}
+                                    className="relative aspect-[4/3] bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden"
                                   >
-                                    <div className="absolute inset-0 pointer-events-none group-hover:bg-black/5 transition-colors z-[1]" />
+                                    <div className="absolute inset-0 pointer-events-none z-[1]" />
                                     <div className="w-full h-full p-4 flex items-center justify-center pointer-events-none">
                                       <svg viewBox="0 0 200 240" className="w-full h-full max-h-[160px] select-none">
                                         {injectionPetType === 'dog' ? (
@@ -2375,10 +2465,6 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                           </g>
                                         )}
                                       </svg>
-                                    </div>
-                                    
-                                    <div className="absolute top-2 right-2 w-7 h-7 bg-white/90 backdrop-blur-xl rounded-lg border border-slate-100 shadow flex items-center justify-center text-emerald-500 opacity-0 group-hover:opacity-100 transition-all transform scale-90 group-hover:scale-100 z-10">
-                                      <Search className="w-3.5 h-3.5" />
                                     </div>
 
                                     <div className="absolute top-2 left-2 bg-white/95 backdrop-blur-xl px-2.5 py-1 rounded-lg border border-slate-100 shadow flex flex-col z-10 pointer-events-none text-left">
