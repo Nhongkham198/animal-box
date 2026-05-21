@@ -17,7 +17,7 @@ export const AnatomyMap: React.FC<AnatomyMapProps> = ({ onSelect, selectedLocati
         const p = path as HTMLElement;
         const partId = p.id || p.getAttribute('name') || `Part ${index + 1}`;
         
-        p.style.cursor = 'pointer';
+        p.style.cursor = 'zoom-in';
         p.classList.add('transition-all', 'duration-300');
         
         // Highlighting Logic

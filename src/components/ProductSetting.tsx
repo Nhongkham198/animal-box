@@ -107,6 +107,9 @@ export default function ProductSetting() {
   const [passcode, setPasscode] = useState('');
   const [deleteError, setDeleteError] = useState(false);
 
+  // Success Toast State
+  const [toast, setToast] = useState<{ show: boolean; message: string }>({ show: false, message: '' });
+
   const handleCreate = () => {
     setEditingProduct({
       id: Math.random().toString(36).substr(2, 9),
@@ -241,6 +244,13 @@ export default function ProductSetting() {
         const { id, ...dataToUpdate } = productData;
         await updateDoc(doc(db, 'inventory', id), dataToUpdate);
       }
+      
+      // Show success toast
+      setToast({ show: true, message: 'บันทึกข้อมูลสำเร็จ!' });
+      setTimeout(() => {
+        setToast((prev) => ({ ...prev, show: false }));
+      }, 3000);
+
       setMode('list');
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'inventory');
@@ -1105,6 +1115,21 @@ export default function ProductSetting() {
             </div>
           </div>
         </div>
+
+        {/* Success Toast */}
+        <AnimatePresence>
+          {toast.show && (
+            <motion.div
+              initial={{ opacity: 0, y: -20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -20, scale: 0.95 }}
+              className="fixed top-6 right-6 bg-emerald-500 text-white px-6 py-4 rounded-2xl shadow-xl shadow-emerald-500/20 flex items-center gap-3 z-[200] border border-emerald-400 font-bold"
+            >
+              <CheckCircle2 className="w-5 h-5 text-white" />
+              <span>{toast.message}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     );
   }
@@ -1396,6 +1421,21 @@ export default function ProductSetting() {
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Success Toast */}
+      <AnimatePresence>
+        {toast.show && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="fixed top-6 right-6 bg-emerald-500 text-white px-6 py-4 rounded-2xl shadow-xl shadow-emerald-500/20 flex items-center gap-3 z-[200] border border-emerald-400 font-bold"
+          >
+            <CheckCircle2 className="w-5 h-5 text-white" />
+            <span>{toast.message}</span>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

@@ -34,6 +34,7 @@ export default function HospitalProfile() {
     lineId,
     facebook,
     instagram,
+    clinicLogo,
     prefixUsername,
     noTagMax,
     bronzeMax,
@@ -57,6 +58,7 @@ export default function HospitalProfile() {
     lineId: lineId,
     facebook: facebook,
     instagram: instagram,
+    logo: clinicLogo,
     noTagMax: noTagMax,
     bronzeMax: bronzeMax,
     silverMax: silverMax,
@@ -77,6 +79,7 @@ export default function HospitalProfile() {
         lineId: lineId,
         facebook: facebook,
         instagram: instagram,
+        logo: clinicLogo,
         noTagMax: noTagMax,
         bronzeMax: bronzeMax,
         silverMax: silverMax,
@@ -85,7 +88,7 @@ export default function HospitalProfile() {
     }
   }, [
     isEditing, clinicName, clinicAddress, clinicPhone, clinicSupportEmail, 
-    clinicHours, hospitalId, website, lineId, facebook, instagram, 
+    clinicHours, hospitalId, website, lineId, facebook, instagram, clinicLogo,
     noTagMax, bronzeMax, silverMax, clinicMapQuery
   ]);
 
@@ -134,6 +137,7 @@ export default function HospitalProfile() {
         lineId: editData.lineId,
         facebook: editData.facebook,
         instagram: editData.instagram,
+        clinicLogo: editData.logo,
         noTagMax: Number(editData.noTagMax),
         bronzeMax: Number(editData.bronzeMax),
         silverMax: Number(editData.silverMax),
@@ -193,20 +197,42 @@ export default function HospitalProfile() {
           {/* Profile Card */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
             <div className="p-8 flex flex-col items-center text-center">
-              <div className="w-32 h-32 rounded-full border-4 border-slate-50 bg-slate-100 flex items-center justify-center mb-4 overflow-hidden">
+              <div 
+                className={cn(
+                  "w-32 h-32 rounded-full border-4 border-slate-50 bg-slate-100 flex items-center justify-center mb-4 overflow-hidden relative group",
+                  isEditing && "cursor-pointer ring-2 ring-indigo-500 ring-offset-2"
+                )}
+              >
                 <img 
-                  src="https://illustrations.popsy.co/amber/medical-care.svg" 
+                  src={isEditing ? editData.logo : clinicLogo} 
                   alt="Hospital Logo" 
-                  className="w-full h-full object-contain p-4"
+                  className="w-full h-full object-contain p-2"
                   referrerPolicy="no-referrer"
                 />
+                {isEditing && (
+                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Edit2 className="w-6 h-6 text-white" />
+                  </div>
+                )}
               </div>
+              
               {isEditing ? (
-                <input 
-                  className="text-xl font-black text-slate-900 mb-6 w-full text-center border-b-2 border-indigo-500 focus:outline-none"
-                  value={editData.name}
-                  onChange={e => setEditData({...editData, name: e.target.value})}
-                />
+                <div className="w-full space-y-4 mb-6">
+                  <div className="text-left">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-center">Logo URL</p>
+                    <input 
+                      className="w-full bg-slate-50 border-none rounded-lg py-2 px-3 focus:ring-2 focus:ring-indigo-500 text-xs font-mono"
+                      placeholder="https://example.com/logo.png"
+                      value={editData.logo}
+                      onChange={e => setEditData({...editData, logo: e.target.value})}
+                    />
+                  </div>
+                  <input 
+                    className="text-xl font-black text-slate-900 w-full text-center border-b-2 border-indigo-500 focus:outline-none bg-transparent"
+                    value={editData.name}
+                    onChange={e => setEditData({...editData, name: e.target.value})}
+                  />
+                </div>
               ) : (
                 <h2 className="text-xl font-black text-slate-900 mb-6">{clinicName}</h2>
               )}

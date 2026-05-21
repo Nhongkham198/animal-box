@@ -22,6 +22,8 @@ interface ClinicContextType {
   setFacebook: (url: string) => void;
   instagram: string;
   setInstagram: (url: string) => void;
+  clinicLogo: string;
+  setClinicLogo: (url: string) => void;
   prefixUsername: string;
   setPrefixUsername: (prefix: string) => void;
   noTagMax: number;
@@ -52,6 +54,7 @@ export function ClinicProvider({ children }: { children: ReactNode }) {
   const [lineId, setLineId] = useState('');
   const [facebook, setFacebook] = useState('');
   const [instagram, setInstagram] = useState('');
+  const [clinicLogo, setClinicLogo] = useState('https://illustrations.popsy.co/amber/medical-care.svg');
   const [prefixUsername, setPrefixUsername] = useState('-');
   const [noTagMax, setNoTagMax] = useState(300);
   const [bronzeMax, setBronzeMax] = useState(2000);
@@ -73,6 +76,7 @@ export function ClinicProvider({ children }: { children: ReactNode }) {
         if (data.lineId) setLineId(data.lineId);
         if (data.facebook) setFacebook(data.facebook);
         if (data.instagram) setInstagram(data.instagram);
+        if (data.clinicLogo) setClinicLogo(data.clinicLogo);
         if (data.prefixUsername) setPrefixUsername(data.prefixUsername);
         if (data.noTagMax !== undefined) setNoTagMax(data.noTagMax);
         if (data.bronzeMax !== undefined) setBronzeMax(data.bronzeMax);
@@ -118,6 +122,8 @@ export function ClinicProvider({ children }: { children: ReactNode }) {
     setFacebook,
     instagram,
     setInstagram,
+    clinicLogo,
+    setClinicLogo,
     prefixUsername,
     setPrefixUsername,
     noTagMax,

@@ -28,7 +28,8 @@ import {
   Printer,
   Save,
   AlertCircle,
-  Clock
+  Clock,
+  GripVertical
 } from 'lucide-react';
 import { 
   db, 
@@ -99,6 +100,7 @@ interface OPDItem {
   woundCare?: boolean;
   woundCareDescription?: string;
   anatomicalParts?: string[];
+  eyeOrder?: string;
 }
 
 interface OPDRecord {
@@ -229,6 +231,99 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
   const [isAnatomyZoomed, setIsAnatomyZoomed] = useState(false);
   const [anatomicalMappings, setAnatomicalMappings] = useState<Record<string, string[]>>({});
 
+  const [rightPanelWidth, setRightPanelWidth] = useState(400); // Default width in pixels
+  const [isResizing, setIsResizing] = useState(false);
+
+  const startResizing = (e: React.MouseEvent) => {
+    setIsResizing(true);
+    e.preventDefault();
+  };
+
+  const stopResizing = () => {
+    setIsResizing(false);
+  };
+
+  const resize = (e: MouseEvent) => {
+    if (isResizing) {
+      const newWidth = window.innerWidth - e.clientX;
+      if (newWidth > 320 && newWidth < 800) { // Constraint for usability
+        setRightPanelWidth(newWidth);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (isResizing) {
+      window.addEventListener('mousemove', resize);
+      window.addEventListener('mouseup', stopResizing);
+    } else {
+      window.removeEventListener('mousemove', resize);
+      window.removeEventListener('mouseup', stopResizing);
+    }
+    return () => {
+      window.removeEventListener('mousemove', resize);
+      window.removeEventListener('mouseup', stopResizing);
+    };
+  }, [isResizing]);
+
+  const [inventoryProducts, setInventoryProducts] = useState<any[]>([]);
+  const [medicationSearchQuery, setMedicationSearchQuery] = useState('');
+  const [showMedicationSuggestions, setShowMedicationSuggestions] = useState(false);
+  const medicationSuggestionsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (medicationSuggestionsRef.current && !medicationSuggestionsRef.current.contains(event.target as Node)) {
+        setShowMedicationSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    const q = query(collection(db, 'inventory'), where('isInStock', '==', true));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setInventoryProducts(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const filteredMedicationSuggestions = useMemo(() => {
+    if (!medicationSearchQuery || medicationSearchQuery.length < 1) return [];
+    return inventoryProducts.filter(p => 
+      p.name.toLowerCase().includes(medicationSearchQuery.toLowerCase()) ||
+      (p.genericName && p.genericName.toLowerCase().includes(medicationSearchQuery.toLowerCase()))
+    ).slice(0, 8);
+  }, [inventoryProducts, medicationSearchQuery]);
+
+  const selectMedication = (product: any) => {
+    const drugLabel = product.drugLabel || {};
+    setNewItem({
+      ...newItem,
+      name: product.name,
+      price: product.price || 0,
+      category: product.type || 'Medicine',
+      unit: product.unit || drugLabel.dosageUnit || 'เม็ด',
+      dosage: drugLabel.dosage ? String(drugLabel.dosage) : '1',
+      usageMethod: drugLabel.medicalUse || 'กิน',
+      timingMeal: drugLabel.timing === 'before' ? 'Before' : (drugLabel.timing === 'after' ? 'After' : 'With'),
+      timingDetail: drugLabel.timingDetail || '',
+      frequency: drugLabel.slots || {
+        morning: false,
+        noon: false,
+        evening: false,
+        bedtime: false
+      },
+      refrigerate: drugLabel.warnings?.fridge || false,
+      shake: drugLabel.warnings?.shake || false,
+      noEat: drugLabel.warnings?.noEat || false,
+      purpose: drugLabel.purpose || ''
+    });
+    setMedicationSearchQuery('');
+    setShowMedicationSuggestions(false);
+  };
+
   // Load custom anatomy map and mappings from database
   useEffect(() => {
     const loadConfig = async () => {
@@ -305,6 +400,56 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
     anatomicalParts: []
   });
 
+  const handleIntervalChange = (val: string) => {
+    const freq = { morning: false, noon: false, evening: false, bedtime: false };
+    if (val === '1 ครั้งต่อวัน') {
+      freq.morning = true;
+    } else if (val === '2 ครั้งต่อวัน') {
+      freq.morning = true;
+      freq.evening = true;
+    } else if (val === '3 ครั้งต่อวัน') {
+      freq.morning = true;
+      freq.noon = true;
+      freq.evening = true;
+    } else if (val === '4 ครั้งต่อวัน') {
+      freq.morning = true;
+      freq.noon = true;
+      freq.evening = true;
+      freq.bedtime = true;
+    } else if (val === 'ทุก 12 ชั่วโมง') {
+      freq.morning = true;
+      freq.evening = true;
+    } else if (val === 'ทุก 8 ชั่วโมง') {
+      freq.morning = true;
+      freq.noon = true;
+      freq.evening = true;
+    } else if (val === 'ทุก 6 ชั่วโมง') {
+      freq.morning = true;
+      freq.noon = true;
+      freq.evening = true;
+      freq.bedtime = true;
+    } else if (val === 'ทุก 24 ชั่วโมง') {
+      freq.morning = true;
+    }
+    setNewItem(prev => ({
+      ...prev,
+      interval: val,
+      frequency: freq
+    }));
+  };
+
+  const handleTimingMealChange = (val: string) => {
+    let mapped: 'Before' | 'After' | 'With' | 'Other' = 'After';
+    if (val === 'ก่อนอาหาร') mapped = 'Before';
+    else if (val === 'หลังอาหาร') mapped = 'After';
+    else if (val === 'กินพร้อมอาหาร') mapped = 'With';
+    else if (val === 'กินตามเวลา') mapped = 'Other';
+    setNewItem(prev => ({
+      ...prev,
+      timingMeal: mapped
+    }));
+  };
+
   const totalAmount = useMemo(() => {
     const mainTotal = (newRecord.items || []).reduce((sum: number, i: any) => sum + (i.price * i.quantity), 0);
     const mergedTotal = (mergedBillingRecords || []).reduce((sum, r) => {
@@ -335,6 +480,40 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
   const selectedPatient = useMemo(() => {
     return patients.find(p => p.id === newRecord.patientId);
   }, [patients, newRecord.patientId]);
+
+  const [injectionPetType, setInjectionPetType] = useState<'dog' | 'cat'>('dog');
+
+  useEffect(() => {
+    if (selectedPatient) {
+      const sp = (selectedPatient.species || '').toLowerCase();
+      if (sp.includes('cat') || sp.includes('แมว')) {
+        setInjectionPetType('cat');
+      } else {
+        setInjectionPetType('dog');
+      }
+    }
+  }, [selectedPatient]);
+
+  useEffect(() => {
+    if (newItem.name) {
+      const isEyeKeyword = newItem.name.toLowerCase().includes('eye') || 
+                           newItem.name.includes('ตา') || 
+                           newItem.name.toLowerCase().includes('timolol') || 
+                           newItem.name.toLowerCase().includes('หยดตา') || 
+                           newItem.name.toLowerCase().includes('ป้ายตา') || 
+                           newItem.name.toLowerCase().includes('drop');
+                           
+      if (isEyeKeyword && (newItem.category === 'Medicine' || !newItem.category)) {
+        setNewItem(prev => ({
+          ...prev,
+          category: 'Eye',
+          usageMethod: 'หยอดตา',
+          unit: 'หยด',
+          eyeOrder: prev.eyeOrder || 'ลำดับที่ 1'
+        }));
+      }
+    }
+  }, [newItem.name]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -1789,8 +1968,25 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
               </form>
             </div>
 
+            {/* Resizable Divider Handle */}
+            <div 
+              className={cn(
+                "w-1 group flex flex-col items-center justify-center cursor-col-resize hover:bg-emerald-300 transition-colors z-20 relative",
+                isResizing ? "bg-emerald-500" : "bg-slate-100"
+              )}
+              onMouseDown={startResizing}
+            >
+              <div className="absolute left-1/2 -translate-x-1/2 w-6 h-12 bg-white rounded-lg shadow-lg border border-slate-200 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                <GripVertical className="w-4 h-4 text-slate-400" />
+              </div>
+            </div>
+
             {/* Right: Medical History Sidebar Column */}
-            <div className="w-[400px] bg-white flex flex-col border-l border-slate-100 shadow-[-20px_0_40px_rgba(0,0,0,0.02)]">
+            <div 
+              className="bg-white flex flex-col border-l border-slate-100 shadow-[-20px_0_40px_rgba(0,0,0,0.02)]"
+              style={{ width: `${rightPanelWidth}px` }}
+            >
+
               {/* TOP: Patient Info Header */}
               <div className="p-8 border-b border-slate-50 bg-slate-50/30">
                 <div className="flex items-center justify-between mb-6">
@@ -1835,268 +2031,1160 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                   <Syringe className="w-4 h-4" /> Pharmacy Management
                 </h3>
 
-                <div className="mb-6">
+                <div className="mb-6 relative">
                   <div className="relative group">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 group-focus-within:text-emerald-500 transition-colors" />
                     <input 
                       type="text"
-                      value={newItem.name}
+                      value={newItem.name || medicationSearchQuery}
                       onChange={e => {
                         const val = e.target.value;
-                        const updates: any = { name: val, category: 'Medicine' };
-                        if (val.includes('ทำแผล')) {
-                          updates.usageMethod = 'ทำแผล';
-                          updates.woundCare = true;
+                        setMedicationSearchQuery(val);
+                        setShowMedicationSuggestions(true);
+                        
+                        if (!val) {
+                          setNewItem({...newItem, name: ''});
+                        } else {
+                          const updates: any = { name: val, category: 'Medicine' };
+                          if (val.includes('ทำแผล')) {
+                            updates.usageMethod = 'ทำแผล';
+                            updates.woundCare = true;
+                          }
+                          setNewItem({...newItem, ...updates});
                         }
-                        setNewItem({...newItem, ...updates});
                       }}
+                      onFocus={() => setShowMedicationSuggestions(true)}
                       className="w-full bg-slate-50 rounded-2xl border-none pl-12 pr-4 py-4 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-100 transition-all shadow-inner"
-                      placeholder="Search medication name..."
+                      placeholder="พิมพ์ค้นหาชื่อยาจากคลัง..."
                     />
                   </div>
+
+                  {/* Medication Suggestions Dropdown */}
+                  <AnimatePresence>
+                    {showMedicationSuggestions && filteredMedicationSuggestions.length > 0 && (
+                      <motion.div 
+                        ref={medicationSuggestionsRef}
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="absolute left-0 right-0 top-full mt-2 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden z-[100] max-h-[300px] overflow-y-auto"
+                      >
+                        {filteredMedicationSuggestions.map((product) => (
+                          <div 
+                            key={product.id}
+                            onClick={() => selectMedication(product)}
+                            className="px-6 py-4 hover:bg-emerald-50 cursor-pointer transition-colors border-b border-slate-50 last:border-0 group"
+                          >
+                            <div className="flex items-center justify-between gap-4">
+                              <div className="flex flex-col">
+                                <p className="text-sm font-black text-slate-800 group-hover:text-emerald-600 transition-colors">
+                                  {product.name}
+                                </p>
+                                {product.genericName && (
+                                  <p className="text-[10px] font-bold text-slate-400">
+                                    {product.genericName}
+                                  </p>
+                                )}
+                              </div>
+                              <div className="text-right">
+                                <p className="text-xs font-black text-emerald-500">
+                                  {product.price?.toLocaleString()} THB
+                                </p>
+                                <p className="text-[9px] font-bold text-slate-400">
+                                  In Stock: {product.currentStock} {product.unit}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
 
                 <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-6">
                   {/* Detailed Drug Label Form */}
                   {newItem.name && (
-                    <div className="p-6 bg-emerald-50/20 rounded-[2rem] border border-emerald-100/50 space-y-6 animate-in fade-in zoom-in-95 duration-300 shadow-sm">
-                      <div className="flex items-center justify-between mb-6 bg-emerald-50/50 p-4 rounded-[1.5rem] border border-emerald-100 flex-wrap gap-2">
-                        <div className="flex items-center gap-2">
-                          <input type="checkbox" id="drug-label-setting-sidebar-check" defaultChecked className="w-4 h-4 text-emerald-500 rounded border-slate-300" />
-                          <label htmlFor="drug-label-setting-sidebar-check" className="text-xs font-black text-emerald-600 uppercase tracking-[0.2em] whitespace-nowrap">Drug Label Setting</label>
-                        </div>
-                        
-                        <label className="cursor-pointer bg-white px-3 py-1.5 rounded-xl border border-emerald-200 text-[10px] font-black text-emerald-600 hover:bg-emerald-50 transition-all shadow-sm active:scale-95 flex items-center gap-2">
-                          <Upload className="w-3 h-3 text-emerald-500" />
-                          <span>นำเข้า SVG</span>
-                          <input 
-                            type="file" 
-                            accept=".svg" 
-                            className="hidden" 
-                            onChange={handleSvgImport}
-                          />
-                        </label>
+                    <div className="p-5 bg-white rounded-3xl border border-slate-100 space-y-5 animate-in fade-in zoom-in-95 duration-300 shadow-xl shadow-slate-100/50">
+                      
+                      {/* Brand Label Setting Header */}
+                      <div className="flex items-center justify-between bg-slate-50 p-3 rounded-2xl border border-slate-100 flex-wrap gap-2">
+                        <span className="text-[10px] font-black text-slate-500">รายละเอียดฉลากยา (Label Settings)</span>
+                        <button
+                          type="button"
+                          onClick={() => setNewItem({ ...newItem, name: '' })}
+                          className="p-1 hover:bg-slate-200 rounded-lg text-slate-400 hover:text-slate-600 transition-colors"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
                       </div>
-
-                      <div className="space-y-4">
-                        <div className="space-y-1">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">วิธีการใช้</span>
-                          <select 
-                            value={newItem.usageMethod}
-                            onChange={e => setNewItem({...newItem, usageMethod: e.target.value})}
-                            className="w-full bg-white rounded-xl border border-emerald-100 px-4 py-2.5 text-sm font-bold shadow-sm outline-none"
-                          >
-                            {['กิน', 'ทา', 'หยอดหู', 'หยอดตา', 'พ่น', 'สวน', 'ล้างหู', 'ทำแผล'].map(m => (
-                              <option key={m} value={m}>{m}</option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="space-y-4 relative">
-                          <div className="flex items-center justify-between">
-                            <div className="flex flex-col">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Anatomical Marker (ระบุตำแหน่งบนตัวสัตว์)</span>
-                              <span className="text-[9px] text-emerald-500 font-medium">จิ้มที่อวัยวะหรือส่วนต่างๆ เพื่อระบุตำแหน่ง</span>
-                            </div>
-                            <button 
-                              type="button"
-                              onClick={() => setNewItem({...newItem, usageLocation: ''})}
-                              className="text-[9px] font-bold text-rose-500 uppercase px-3 py-1.5 bg-rose-50 rounded-xl hover:bg-rose-100 transition-all border border-rose-100"
-                            >
-                              รีเซ็ตตำแหน่ง
-                            </button>
-                          </div>
+                      {(() => {
+                        const isEyeMedicine = newItem.category === 'Eye' || ((newItem.type as string) === 'Eye');
+                        
+                        if (isEyeMedicine) {
+                          const isLeftEyeSelected = (newItem.usageLocation || '').includes('ตาซ้าย');
+                          const isRightEyeSelected = (newItem.usageLocation || '').includes('ตาขวา');
                           
-                          <div 
-                            className="relative aspect-[4/3] bg-white rounded-[2.5rem] border border-emerald-100 group shadow-2xl overflow-hidden cursor-zoom-in"
-                            onClick={() => setIsAnatomyZoomed(true)}
-                          >
-                            <div className="absolute inset-0 pointer-events-none group-hover:bg-black/5 transition-colors z-0" />
-                            <AnatomyMap 
-                              onSelect={(loc) => {
-                                const currentParts = newItem.anatomicalParts || [];
-                                const index = currentParts.findIndex(l => l.toLowerCase() === loc.toLowerCase());
-                                let nextParts;
-                                if (index > -1) {
-                                  nextParts = currentParts.filter((_, i) => i !== index);
-                                } else {
-                                  nextParts = [...currentParts, loc];
-                                }
-                                setNewItem({...newItem, anatomicalParts: nextParts});
-                              }} 
-                              selectedLocations={newItem.anatomicalParts || []}
-                              customSvg={customAnatomySvg}
-                            />
-                            
-                            {/* Expand Icon */}
-                            <div className="absolute top-6 right-6 w-10 h-10 bg-white/90 backdrop-blur-xl rounded-2xl border border-emerald-100 shadow-xl flex items-center justify-center text-emerald-500 opacity-0 group-hover:opacity-100 transition-all transform scale-90 group-hover:scale-100 z-10">
-                              <Maximize2 className="w-5 h-5" />
+                          const toggleLeftEye = () => {
+                            let newLocation = '';
+                            if (isLeftEyeSelected && isRightEyeSelected) {
+                              newLocation = 'ตาขวา';
+                            } else if (isLeftEyeSelected && !isRightEyeSelected) {
+                              newLocation = '';
+                            } else if (!isLeftEyeSelected && isRightEyeSelected) {
+                              newLocation = 'ตาซ้าย, ตาขวา';
+                            } else {
+                              newLocation = 'ตาซ้าย';
+                            }
+                            setNewItem({
+                              ...newItem,
+                              usageLocation: newLocation,
+                              usageMethod: (newItem.eyeOrder && newItem.eyeOrder !== 'ไม่มีระบุ') ? `หยอดตา - ` + newItem.eyeOrder : 'หยอดตา'
+                            });
+                          };
+
+                          const toggleRightEye = () => {
+                            let newLocation = '';
+                            if (isLeftEyeSelected && isRightEyeSelected) {
+                              newLocation = 'ตาซ้าย';
+                            } else if (!isLeftEyeSelected && isRightEyeSelected) {
+                              newLocation = '';
+                            } else if (isLeftEyeSelected && !isRightEyeSelected) {
+                              newLocation = 'ตาซ้าย, ตาขวา';
+                            } else {
+                              newLocation = 'ตาขวา';
+                            }
+                            setNewItem({
+                              ...newItem,
+                              usageLocation: newLocation,
+                              usageMethod: (newItem.eyeOrder && newItem.eyeOrder !== 'ไม่มีระบุ') ? `หยอดตา - ` + newItem.eyeOrder : 'หยอดตา'
+                            });
+                          };
+
+                          return (
+                            <>
+                              {/* Row 1: ชื่อยา + ประเภทยา (Auto) */}
+                              <div className="grid grid-cols-12 gap-2 animate-in fade-in duration-200">
+                                <div className="col-span-12 md:col-span-5 flex flex-col gap-1 min-w-0">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ชื่อยา</span>
+                                  <input 
+                                    type="text" 
+                                    value={newItem.name || ''} 
+                                    onChange={e => setNewItem({...newItem, name: e.target.value})}
+                                    className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all"
+                                    placeholder="ชื่อยา..."
+                                  />
+                                </div>
+                                
+                                <div className="col-span-12 md:col-span-7 flex flex-col gap-1 min-w-0">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ประเภทยา (ขึ้น Auto ตามฐานข้อมูล)</span>
+                                  <select 
+                                    value={newItem.category || 'Eye'} 
+                                    onChange={e => {
+                                      const cat = e.target.value;
+                                      setNewItem({
+                                        ...newItem, 
+                                        category: cat,
+                                        usageMethod: cat === 'Eye' ? 'หยอดตา' : 'กิน'
+                                      });
+                                    }}
+                                    className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all cursor-pointer text-emerald-600 bg-emerald-50/10"
+                                  >
+                                    <option value="Eye">Eye Medicine (ยาใช้กับดวงตา)</option>
+                                    <option value="Medicine">Medicine (ยาทั่วไป)</option>
+                                    <option value="Anti-parasite">Anti-parasite (ยาฆ่าพยาธิ)</option>
+                                    <option value="Vaccine">Vaccine (ยาคุม/วัคซีน)</option>
+                                    <option value="Supplies">Supplies (เวชภัณฑ์)</option>
+                                    <option value="Food">Food (อาหาร)</option>
+                                    <option value="Other">Other (อื่น ๆ)</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              {/* Row 2: จำนวนที่ใช้ต่อครั้ง + หน่วย + ใช้วันละกี่ครั้งต่อวัน */}
+                              <div className="grid grid-cols-12 gap-2 animate-in fade-in duration-200">
+                                <div className="col-span-4 flex flex-col gap-1">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">จำนวนที่ใช้ต่อครั้ง</span>
+                                  <input 
+                                    type="text" 
+                                    value={newItem.dosage || ''} 
+                                    onChange={e => setNewItem({...newItem, dosage: e.target.value})}
+                                    className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-center focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all"
+                                    placeholder="จำนวน..."
+                                  />
+                                </div>
+                                
+                                <div className="col-span-3 flex flex-col gap-1">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">หน่วย</span>
+                                  <select 
+                                    value={newItem.unit || 'หยด'} 
+                                    onChange={e => setNewItem({...newItem, unit: e.target.value})}
+                                    className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-2 py-2 text-xs font-black focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all cursor-pointer"
+                                  >
+                                    {['หยด', 'ป้าย', 'มิลลิลิตร', 'เม็ด', 'หลอด', 'g', 'ซีซี'].map(u => (
+                                      <option key={u} value={u}>{u}</option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div className="col-span-5 flex flex-col gap-1">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ใช้วันละกี่ครั้งต่อวัน</span>
+                                  <select 
+                                    value={newItem.interval || '2 ครั้งต่อวัน'} 
+                                    onChange={e => setNewItem({...newItem, interval: e.target.value})}
+                                    className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all cursor-pointer"
+                                  >
+                                    <option value="1 ครั้งต่อวัน">1 ครั้งต่อวัน</option>
+                                    <option value="2 ครั้งต่อวัน">2 ครั้งต่อวัน</option>
+                                    <option value="3 ครั้งต่อวัน">3 ครั้งต่อวัน</option>
+                                    <option value="4 ครั้งต่อวัน">4 ครั้งต่อวัน</option>
+                                    <option value="ทุก 12 ชั่วโมง">ทุก 12 ชั่วโมง</option>
+                                    <option value="ทุก 8 ชั่วโมง">ทุก 8 ชั่วโมง</option>
+                                    <option value="ทุก 6 ชั่วโมง">ทุก 6 ชั่วโมง</option>
+                                    <option value="หยอดเมื่อมีอาการระคายเคือง">หยอดเมื่อมีอาการระคายเคือง</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              {/* Row 3: ลำดับที่ + ข้อควรระวัง */}
+                              <div className="grid grid-cols-12 gap-2 animate-in fade-in duration-200">
+                                <div className="col-span-4 flex flex-col gap-1">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ลำดับที่</span>
+                                  <select 
+                                    value={newItem.eyeOrder || 'ลำดับที่ 1'} 
+                                    onChange={e => {
+                                      const order = e.target.value;
+                                      setNewItem({
+                                        ...newItem, 
+                                        eyeOrder: order,
+                                        usageMethod: order === 'ไม่มีระบุ' ? 'หยอดตา' : `หยอดตา - ` + order
+                                      });
+                                    }}
+                                    className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all cursor-pointer"
+                                  >
+                                    <option value="ลำดับที่ 1">ลำดับที่ 1</option>
+                                    <option value="ลำดับที่ 2">ลำดับที่ 2</option>
+                                    <option value="ลำดับที่ 3">ลำดับที่ 3</option>
+                                    <option value="ลำดับที่ 4">ลำดับที่ 4</option>
+                                    <option value="ลำดับที่ 5">ลำดับที่ 5</option>
+                                    <option value="ไม่มีระบุ">ไม่มีระบุ</option>
+                                  </select>
+                                </div>
+
+                                <div className="col-span-8 flex flex-col gap-1">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ข้อควรระวัง</span>
+                                  <input 
+                                    type="text" 
+                                    value={newItem.purpose || ''} 
+                                    onChange={e => setNewItem({...newItem, purpose: e.target.value})}
+                                    className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all"
+                                    placeholder="พิมพ์หรือเลือกข้อควรระวัง..."
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Precaution quick selections */}
+                              <div className="flex flex-wrap gap-1">
+                                {[
+                                  "เก็บให้พ้นแสง",
+                                  "เขย่าขวดก่อนใช้",
+                                  "เก็บในตู้เย็น ห้ามแช่แข็ง",
+                                  "ใช้เสร็จปัดหัวให้สะอาด",
+                                  "หยอดห่างจากยาขวดอื่น 5-10 นาที"
+                                ].map(warn => (
+                                  <button
+                                    key={warn}
+                                    type="button"
+                                    onClick={() => setNewItem({...newItem, purpose: warn})}
+                                    className="text-[9px] font-bold text-teal-600 bg-teal-50/30 border border-teal-100 hover:bg-teal-50 px-2.5 py-0.5 rounded-lg transition-colors"
+                                  >
+                                    {warn}
+                                  </button>
+                                ))}
+                              </div>
+
+                              {/* Dual-Diagram Row: Left dog/cat animal map, Right interactive eye drop drawer */}
+                              <div className="grid grid-cols-12 gap-3 animate-in fade-in duration-300">
+                                
+                                {/* 1. Dog/Cat Representative Image Card */}
+                                <div className="col-span-12 lg:col-span-6 bg-slate-50/40 rounded-2xl border border-slate-100 p-3 flex flex-col gap-2.5 relative overflow-hidden">
+                                  <div className="flex items-center justify-between border-b border-slate-200/50 pb-1.5 flex-wrap gap-1.5">
+                                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">รูปภาพตัวแทนสัตว์</span>
+                                    <div className="flex rounded-xl bg-slate-200/60 p-0.5 border border-slate-200 text-[9px]">
+                                      <button 
+                                        type="button" 
+                                        onClick={() => setInjectionPetType('dog')}
+                                        className={cn(
+                                          "px-2.5 py-0.5 rounded-lg font-black transition-all",
+                                          injectionPetType === 'dog' ? "bg-white text-slate-800 shadow-sm" : "text-slate-400 hover:text-slate-600"
+                                        )}
+                                      >
+                                        หมา (Dog)
+                                      </button>
+                                      <button 
+                                        type="button" 
+                                        onClick={() => setInjectionPetType('cat')}
+                                        className={cn(
+                                          "px-2.5 py-0.5 rounded-lg font-black transition-all",
+                                          injectionPetType === 'cat' ? "bg-white text-slate-800 shadow-sm" : "text-slate-400 hover:text-slate-600"
+                                        )}
+                                      >
+                                        แมว (Cat)
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div 
+                                    className="relative aspect-[4/3] bg-white rounded-xl border border-slate-100 shadow-sm group cursor-zoom-in overflow-hidden"
+                                    onClick={() => setIsAnatomyZoomed(true)}
+                                  >
+                                    <div className="absolute inset-0 pointer-events-none group-hover:bg-black/5 transition-colors z-[1]" />
+                                    <div className="w-full h-full p-4 flex items-center justify-center pointer-events-none">
+                                      <svg viewBox="0 0 200 240" className="w-full h-full max-h-[160px] select-none">
+                                        {injectionPetType === 'dog' ? (
+                                          <g fill="none" stroke="#cbd5e1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            {/* Ears */}
+                                            <path d="M 75 35 C 60 40, 55 65, 65 75 C 70 80, 75 75, 75 65 Z" fill="#f8fafc" />
+                                            <path d="M 125 35 C 140 40, 145 65, 135 75 C 130 80, 125 75, 125 65 Z" fill="#f8fafc" />
+                                            {/* Head */}
+                                            <path d="M 75 55 C 75 35, 125 35, 125 55 C 125 70, 75 70, 75 55 Z" fill="#f8fafc" />
+                                            {/* Dog Snout */}
+                                            <ellipse cx="100" cy="62" rx="10" ry="8" fill="#f1f5f9" stroke="#cbd5e1" />
+                                            <circle cx="100" cy="58" r="3" fill="#64748b" />
+                                            {/* Body */}
+                                            <path d="M 75 65 C 65 85, 45 80, 35 90 C 25 100, 30 110, 45 105 C 55 100, 65 100, 70 115 C 65 135, 65 155, 55 165 C 45 175, 35 178, 38 190 C 42 198, 55 193, 65 183 C 75 173, 85 178, 100 178 C 115 178, 125 173, 135 183 C 145 193, 158 198, 162 190 C 165 178, 155 175, 145 165 C 135 155, 135 135, 130 115 C 135 100, 145 100, 155 105 C 170 110, 175 100, 165 90 C 155 80, 135 85, 125 65" fill="#f8fafc" />
+                                            {/* Tail */}
+                                            <path d="M 100 178 C 100 205, 115 215, 120 210" />
+                                          </g>
+                                        ) : (
+                                          <g fill="none" stroke="#cbd5e1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            {/* Pointy Ears */}
+                                            <polygon points="75,35 60,15 85,32" fill="#f8fafc" />
+                                            <polygon points="125,35 140,15 115,32" fill="#f8fafc" />
+                                            {/* Head */}
+                                            <path d="M 75 50 C 75 30, 125 30, 125 50 C 125 68, 75 68, 75 50 Z" fill="#f8fafc" />
+                                            {/* Whiskers */}
+                                            <line x1="68" y1="52" x2="52" y2="50" stroke="#cbd5e1" />
+                                            <line x1="68" y1="55" x2="50" y2="56" stroke="#cbd5e1" />
+                                            <line x1="132" y1="52" x2="148" y2="50" stroke="#cbd5e1" />
+                                            <line x1="132" y1="55" x2="150" y2="56" stroke="#cbd5e1" />
+                                            {/* Body */}
+                                            <path d="M 78 58 C 70 80, 50 78, 40 85 C 30 92, 32 102, 45 98 C 55 95, 62 95, 68 110 C 62 135, 62 155, 52 165 C 42 175, 32 178, 35 190 C 38 198, 50 193, 60 183 C 70 173, 80 180, 100 180 C 120 180, 130 173, 140 183 C 150 193, 162 198, 165 190 C 168 178, 158 175, 148 165 C 138 155, 138 135, 132 110 C 138 95, 145 95, 155 98 C 168 102, 170 92, 160 85 C 150 78, 130 80, 122 58" fill="#f8fafc" />
+                                            {/* Tail */}
+                                            <path d="M 100 180 C 100 205, 90 225, 105 230 C 115 232, 118 220, 115 210" />
+                                          </g>
+                                        )}
+                                      </svg>
+                                    </div>
+                                    
+                                    <div className="absolute top-2 right-2 w-7 h-7 bg-white/90 backdrop-blur-xl rounded-lg border border-slate-100 shadow flex items-center justify-center text-emerald-500 opacity-0 group-hover:opacity-100 transition-all transform scale-90 group-hover:scale-100 z-10">
+                                      <Search className="w-3.5 h-3.5" />
+                                    </div>
+
+                                    <div className="absolute top-2 left-2 bg-white/95 backdrop-blur-xl px-2.5 py-1 rounded-lg border border-slate-100 shadow flex flex-col z-10 pointer-events-none text-left">
+                                      <span className="text-[7.5px] font-black text-slate-400 uppercase tracking-wider leading-none">ตำแหน่งหลัก</span>
+                                      <div className="text-[10px] font-black text-emerald-600 truncate max-w-[100px] mt-0.5 leading-tight">
+                                        {newItem.usageLocation || 'ระบุบนตัวหมา/แมว...'}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <input 
+                                    type="text"
+                                    value={newItem.usageLocation || ''}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      const organNames = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                                      const allPartsSet = new Set<string>();
+                                      organNames.forEach(name => {
+                                        if (anatomicalMappings[name]) {
+                                          anatomicalMappings[name].forEach(p => allPartsSet.add(p));
+                                        }
+                                      });
+                                      setNewItem({
+                                        ...newItem, 
+                                        usageLocation: val,
+                                        anatomicalParts: allPartsSet.size > 0 ? Array.from(allPartsSet) : newItem.anatomicalParts
+                                      });
+                                    }}
+                                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-[10px] font-bold outline-none focus:ring-2 focus:ring-emerald-500/10"
+                                    placeholder="แต่งเติม เช่น หาง, หูซ้าย..."
+                                  />
+                                </div>
+
+                                {/* 2. Eye Drop location Large Diagram Card */}
+                                <div className="col-span-12 lg:col-span-6 bg-slate-50/40 border border-slate-100 rounded-2xl p-3 flex flex-col gap-2.5 relative overflow-hidden justify-between">
+                                  <div className="flex items-center justify-between border-b border-slate-200/50 pb-1.5 flex-wrap gap-1.5">
+                                    <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest leading-none">ตำแหน่งที่รักษาเรื่องตา (Ophthalmic)</span>
+                                    <div className="flex rounded-xl bg-slate-250/60 p-0.5 border border-slate-200 text-[9px]">
+                                      <button 
+                                        type="button" 
+                                        onClick={toggleLeftEye}
+                                        className={cn(
+                                          "px-2.5 py-0.5 rounded-lg font-black transition-all",
+                                          isLeftEyeSelected ? "bg-teal-500 text-white shadow-sm" : "text-slate-500 hover:text-slate-800"
+                                        )}
+                                      >
+                                        ซ้าย
+                                      </button>
+                                      <button 
+                                        type="button" 
+                                        onClick={toggleRightEye}
+                                        className={cn(
+                                          "px-2.5 py-0.5 rounded-lg font-black transition-all",
+                                          isRightEyeSelected ? "bg-teal-500 text-white shadow-sm" : "text-slate-500 hover:text-slate-800"
+                                        )}
+                                      >
+                                        ขวา
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Interactive Double Eyes Box */}
+                                  <div className="grid grid-cols-2 gap-2 bg-white rounded-xl border border-slate-200 p-2">
+                                    {/* Left Eye panel */}
+                                    <div 
+                                      onClick={toggleLeftEye}
+                                      className={cn(
+                                        "flex flex-col items-center justify-center p-2 rounded-lg border border-dashed transition-all cursor-pointer group text-center select-none",
+                                        isLeftEyeSelected 
+                                          ? "bg-teal-50/40 border-teal-500 ring-2 ring-teal-500/10 animate-fade-in" 
+                                          : "bg-slate-50/30 border-slate-200 hover:border-teal-300 hover:bg-slate-50"
+                                      )}
+                                    >
+                                      <span className="text-[8px] font-black uppercase tracking-wider mb-1 text-slate-400 group-hover:text-teal-500 transition-colors">
+                                        ตาซ้าย (Left Eye)
+                                      </span>
+                                      <div className={cn("w-14 text-slate-300 transition-colors duration-300", isLeftEyeSelected ? "text-teal-500" : "group-hover:text-slate-400")}>
+                                        <svg viewBox="0 0 160 80" className="w-full h-auto drop-shadow-sm">
+                                          <path d="M10,40 Q80,5 150,40 Q80,75 10,40 Z" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                                          <circle cx="80" cy="40" r="22" fill="none" stroke="currentColor" strokeWidth="2" />
+                                          <circle cx="80" cy="40" r="10" fill="currentColor" />
+                                          <circle cx="74" cy="34" r="3.5" fill="white" />
+                                          <circle cx="86" cy="44" r="1.5" fill="white" />
+                                        </svg>
+                                      </div>
+                                      {isLeftEyeSelected && (
+                                        <span className="mt-1 text-[7.5px] font-black bg-teal-500 text-white px-2 py-0.5 rounded-full leading-none">
+                                          ACTIVE
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {/* Right Eye panel */}
+                                    <div 
+                                      onClick={toggleRightEye}
+                                      className={cn(
+                                        "flex flex-col items-center justify-center p-2 rounded-lg border border-dashed transition-all cursor-pointer group text-center select-none",
+                                        isRightEyeSelected 
+                                          ? "bg-teal-50/40 border-teal-500 ring-2 ring-teal-500/10 animate-fade-in" 
+                                          : "bg-slate-50/30 border-slate-200 hover:border-teal-300 hover:bg-slate-50"
+                                      )}
+                                    >
+                                      <span className="text-[8px] font-black uppercase tracking-wider mb-1 text-slate-400 group-hover:text-teal-500 transition-colors">
+                                        ตาขวา (Right Eye)
+                                      </span>
+                                      <div className={cn("w-14 text-slate-300 transition-colors duration-300", isRightEyeSelected ? "text-teal-500" : "group-hover:text-slate-400")}>
+                                        <svg viewBox="0 0 160 80" className="w-full h-auto drop-shadow-sm">
+                                          <path d="M10,40 Q80,5 150,40 Q80,75 10,40 Z" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                                          <circle cx="80" cy="40" r="22" fill="none" stroke="currentColor" strokeWidth="2" />
+                                          <circle cx="80" cy="40" r="10" fill="currentColor" />
+                                          <circle cx="74" cy="34" r="3.5" fill="white" />
+                                          <circle cx="86" cy="44" r="1.5" fill="white" />
+                                        </svg>
+                                      </div>
+                                      {isRightEyeSelected && (
+                                        <span className="mt-1 text-[7.5px] font-black bg-teal-500 text-white px-2 py-0.5 rounded-full leading-none">
+                                          ACTIVE
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="bg-teal-500/10 p-2 rounded-xl text-[8px] font-bold text-teal-700 leading-normal">
+                                    💡 <span className="font-black">หยอดตารวม:</span> สามารถกดเลือกที่ดวงตา หรือพิมพ์ระบุแมนนวล เช่น "ตาขวา" ได้ ระบบจะอัปเดตฉลากยาให้อัตโนมัติ
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Secondary Settings Panel: Fridge, Shake, On condition & WoundCare */}
+                              <div className="p-4 bg-slate-50/30 border border-slate-100 rounded-2xl grid grid-cols-2 gap-3">
+                                <div className="flex flex-col gap-2">
+                                  <label className="flex items-center gap-3 cursor-pointer">
+                                    <input 
+                                      type="checkbox" 
+                                      checked={newItem.refrigerate || false} 
+                                      onChange={e => setNewItem({...newItem, refrigerate: e.target.checked})} 
+                                      className="w-4 h-4 text-sky-500 rounded border-slate-200" 
+                                    />
+                                    <span className="text-[10px] font-black text-sky-600 uppercase tracking-widest">เก็บในตู้เย็น (Fridge)</span>
+                                  </label>
+                                  <label className="flex items-center gap-3 cursor-pointer">
+                                    <input 
+                                      type="checkbox" 
+                                      checked={newItem.shake || false} 
+                                      onChange={e => setNewItem({...newItem, shake: e.target.checked})} 
+                                      className="w-4 h-4 text-[#00b4d8] rounded border-slate-200" 
+                                    />
+                                    <span className="text-[10px] font-black text-[#00b4d8] uppercase tracking-widest">เขย่าก่อนใช้ (Shake)</span>
+                                  </label>
+                                  <label className="flex items-center gap-3 cursor-pointer">
+                                    <input 
+                                      type="checkbox" 
+                                      checked={newItem.onCondition || false} 
+                                      onChange={e => setNewItem({...newItem, onCondition: e.target.checked})} 
+                                      className="w-4 h-4 text-emerald-500 rounded border-slate-200" 
+                                    />
+                                    <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">เมื่อมีอาการ (As needed)</span>
+                                  </label>
+                                </div>
+                                
+                                <div className="space-y-2">
+                                  <label className="flex items-center gap-3 cursor-pointer">
+                                    <input 
+                                      type="checkbox" 
+                                      checked={newItem.woundCare || false} 
+                                      onChange={e => setNewItem({...newItem, woundCare: e.target.checked})} 
+                                      className="w-4 h-4 text-rose-500 rounded border-slate-200" 
+                                    />
+                                    <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest">ต้องการทำแผล (WoundCare)</span>
+                                  </label>
+                                  {newItem.woundCare && (
+                                    <input 
+                                      type="text"
+                                      value={newItem.woundCareDescription || ''}
+                                      onChange={e => setNewItem({...newItem, woundCareDescription: e.target.value})}
+                                      placeholder="รายละเอียดการผลิตหรือทำแผล..."
+                                      className="w-full bg-rose-50/50 rounded-xl border border-rose-100 px-3 py-1.5 text-xs font-bold outline-none placeholder:text-rose-300 text-rose-600"
+                                    />
+                                  )}
+                                </div>
+                              </div>
+                            </>
+                          );
+                        }
+
+                        const isInjectionOrVaccine = newItem.type === 'Injection' || newItem.category === 'Vaccine';
+                        if (isInjectionOrVaccine) {
+                          return (
+                            <>
+                              {/* Row 1: ชื่อยา + ประเภทยา (Auto) */}
+                              <div className="grid grid-cols-12 gap-2">
+                                <div className="col-span-6 flex flex-col gap-1">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ชื่อยา</span>
+                                  <input 
+                                    type="text" 
+                                    value={newItem.name || ''} 
+                                    onChange={e => setNewItem({...newItem, name: e.target.value})}
+                                    className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all"
+                                    placeholder="ชื่อยา..."
+                                  />
+                                </div>
+                                
+                                <div className="col-span-6 flex flex-col gap-1">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ประเภทยา (ขึ้น Auto ตามฐานข้อมูล)</span>
+                                  <select 
+                                    value={newItem.category || 'Medicine'} 
+                                    onChange={e => setNewItem({...newItem, category: e.target.value})}
+                                    className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all cursor-pointer"
+                                  >
+                                    <option value="Medicine">Medicine (ยาทั่วไป)</option>
+                                    <option value="Anti-parasite">Anti-parasite (ยาฆ่าพยาธิ)</option>
+                                    <option value="Vaccine">Vaccine (ยาคุม/วัคซีน)</option>
+                                    <option value="Eye">Eye Medicine (ยาใช้กับดวงตา)</option>
+                                    <option value="Supplies">Supplies (เวชภัณฑ์)</option>
+                                    <option value="Food">Food (อาหาร)</option>
+                                    <option value="Other">Other (อื่น ๆ)</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              {/* Row 2: ตำแหน่งที่ฉีด + ข้อควรระวัง */}
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ตำแหน่งที่ฉีด</span>
+                                  <input 
+                                    type="text" 
+                                    value={newItem.usageLocation || ''} 
+                                    onChange={e => setNewItem({...newItem, usageLocation: e.target.value})}
+                                    className="w-full bg-slate-50 border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all"
+                                    placeholder="ระบุตำแหน่ง หรือจิ้มภาพด้านล่าง..."
+                                  />
+                                </div>
+
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ข้อควรระวัง</span>
+                                  <input 
+                                    type="text" 
+                                    value={newItem.purpose || ''} 
+                                    onChange={e => setNewItem({...newItem, purpose: e.target.value})}
+                                    className="w-full bg-slate-50 border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all"
+                                    placeholder="เลือกหรือพิมพ์คัดกรองเบื้องต้น..."
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Warning quick-select row */}
+                              <div className="flex flex-wrap gap-1">
+                                {[
+                                  "ไม่มีข้อควรระวังพิเศษ",
+                                  "สังเกตอาการแพ้หลังฉีด 15-30 นาที",
+                                  "ประคบเย็นหากมีอาการบวมแดง",
+                                  "สลับตำแหน่งเข็มห้ามฉีดซ้ำจุดเดิม",
+                                  "เก็บในตู้เย็นห้ามแช่แข็ง"
+                                ].map(warn => (
+                                  <button
+                                    key={warn}
+                                    type="button"
+                                    onClick={() => setNewItem({...newItem, purpose: warn})}
+                                    className="text-[9px] font-bold text-slate-500 bg-white border border-slate-200 hover:bg-slate-50 px-2.5 py-0.5 rounded-lg"
+                                  >
+                                    {warn}
+                                  </button>
+                                ))}
+                              </div>
+
+                              {/* Row 3: Interactive Animal Map and Blue Box layout */}
+                              <div className="grid grid-cols-12 gap-3">
+                                {/* Left Card: 3D-Like / Schematic Pet outline with tabs */}
+                                <div className="col-span-7 bg-slate-50/40 rounded-2xl border border-slate-100 p-3 flex flex-col gap-3 relative overflow-hidden">
+                                  <div className="flex items-center justify-between border-b border-slate-200/50 pb-2 flex-wrap gap-1.5">
+                                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">รูปภาพตัวแทนสัตว์</span>
+                                    <div className="flex rounded-xl bg-slate-200/60 p-0.5 border border-slate-200 text-[10px]">
+                                      <button 
+                                        type="button" 
+                                        onClick={() => setInjectionPetType('dog')}
+                                        className={cn(
+                                          "px-3 py-1 rounded-lg font-black transition-all",
+                                          injectionPetType === 'dog' ? "bg-white text-slate-800 shadow-sm" : "text-slate-400 hover:text-slate-600"
+                                        )}
+                                      >
+                                        หมา (Dog)
+                                      </button>
+                                      <button 
+                                        type="button" 
+                                        onClick={() => setInjectionPetType('cat')}
+                                        className={cn(
+                                          "px-3 py-1 rounded-lg font-black transition-all",
+                                          injectionPetType === 'cat' ? "bg-white text-slate-800 shadow-sm" : "text-slate-400 hover:text-slate-600"
+                                        )}
+                                      >
+                                        แมว (Cat)
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Interactive Vector Overlay Map */}
+                                  <div className="bg-white rounded-xl border border-slate-100/80 p-2 flex items-center justify-center relative aspect-[1.1] min-h-[220px]">
+                                    {/* L / R Margin Labels */}
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-2xl font-black text-slate-300 font-mono">L</span>
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-2xl font-black text-slate-300 font-mono">R</span>
+
+                                    {/* SVG Outline based on species */}
+                                    <svg viewBox="0 0 200 240" className="w-full h-full max-h-[220px] select-none">
+                                      {/* Dynamic Silhouette */}
+                                      {injectionPetType === 'dog' ? (
+                                        <g fill="none" stroke="#e2e8f0" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                          {/* Ears */}
+                                          <path d="M 75 35 C 60 40, 55 65, 65 75 C 70 80, 75 75, 75 65 Z" fill="#f8fafc" />
+                                          <path d="M 125 35 C 140 40, 145 65, 135 75 C 130 80, 125 75, 125 65 Z" fill="#f8fafc" />
+                                          {/* Head */}
+                                          <path d="M 75 55 C 75 35, 125 35, 125 55 C 125 70, 75 70, 75 55 Z" fill="#f8fafc" />
+                                          {/* Dog Snout */}
+                                          <ellipse cx="100" cy="62" rx="10" ry="8" fill="#f1f5f9" stroke="#cbd5e1" />
+                                          <circle cx="100" cy="58" r="3" fill="#64748b" />
+                                          {/* Body */}
+                                          <path d="M 75 65 C 65 85, 45 80, 35 90 C 25 100, 30 110, 45 105 C 55 100, 65 100, 70 115 C 65 135, 65 155, 55 165 C 45 175, 35 178, 38 190 C 42 198, 55 193, 65 183 C 75 173, 85 178, 100 178 C 115 178, 125 173, 135 183 C 145 193, 158 198, 162 190 C 165 178, 155 175, 145 165 C 135 155, 135 135, 130 115 C 135 100, 145 100, 155 105 C 170 110, 175 100, 165 90 C 155 80, 135 85, 125 65" fill="#f8fafc" />
+                                          {/* Tail */}
+                                          <path d="M 100 178 C 100 205, 115 215, 120 210" />
+                                        </g>
+                                      ) : (
+                                        <g fill="none" stroke="#e2e8f0" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                          {/* Pointy Ears */}
+                                          <polygon points="75,35 60,15 85,32" fill="#f8fafc" />
+                                          <polygon points="125,35 140,15 115,32" fill="#f8fafc" />
+                                          {/* Head */}
+                                          <path d="M 75 50 C 75 30, 125 30, 125 50 C 125 68, 75 68, 75 50 Z" fill="#f8fafc" />
+                                          {/* Whiskers */}
+                                          <line x1="68" y1="52" x2="52" y2="50" stroke="#cbd5e1" />
+                                          <line x1="68" y1="55" x2="50" y2="56" stroke="#cbd5e1" />
+                                          <line x1="132" y1="52" x2="148" y2="50" stroke="#cbd5e1" />
+                                          <line x1="132" y1="55" x2="150" y2="56" stroke="#cbd5e1" />
+                                          {/* Body */}
+                                          <path d="M 78 58 C 70 80, 50 78, 40 85 C 30 92, 32 102, 45 98 C 55 95, 62 95, 68 110 C 62 135, 62 155, 52 165 C 42 175, 32 178, 35 190 C 38 198, 50 193, 60 183 C 70 173, 80 180, 100 180 C 120 180, 130 173, 140 183 C 150 193, 162 198, 165 190 C 168 178, 158 175, 148 165 C 138 155, 138 135, 132 110 C 138 95, 145 95, 155 98 C 168 102, 170 92, 160 85 C 150 78, 130 80, 122 58" fill="#f8fafc" />
+                                          {/* Tail */}
+                                          <path d="M 100 180 C 100 205, 90 225, 105 230 C 115 232, 118 220, 115 210" />
+                                        </g>
+                                      )}
+
+                                      {/* Highlighting selected hot-spots */}
+                                      {[
+                                        { id: 'neck', name: 'ต้นคอ', x: 100, y: 75, type: 'SC' },
+                                        { id: 'shoulder_l', name: 'หัวไหล่ซ้าย', x: 62, y: 88, type: 'IM' },
+                                        { id: 'shoulder_r', name: 'หัวไหล่ขวา', x: 138, y: 88, type: 'IM' },
+                                        { id: 'back', name: 'กลางหลัง', x: 100, y: 125, type: 'SC' },
+                                        { id: 'flank_l', name: 'ข้างตัวซ้าย', x: 70, y: 140, type: 'SC' },
+                                        { id: 'flank_r', name: 'ข้างตัวขวา', x: 130, y: 140, type: 'SC' },
+                                        { id: 'hip_l', name: 'สะโพกซ้าย', x: 75, y: 170, type: 'IM' },
+                                        { id: 'hip_r', name: 'สะโพกขวา', x: 125, y: 170, type: 'IM' },
+                                      ].map(target => {
+                                        const isSelected = (newItem.usageLocation || '').includes(target.name);
+                                        return (
+                                          <g 
+                                            key={target.id}
+                                            className="cursor-pointer group/spot"
+                                            onClick={() => {
+                                              // Extract existing route prefix if any, like "SC" or "IM"
+                                              const currentRouteMatch = (newItem.usageLocation || '').match(/^(SC|IM|IV|Fluid)/);
+                                              const prefix = currentRouteMatch ? currentRouteMatch[0] : target.type;
+                                              setNewItem({
+                                                ...newItem,
+                                                usageLocation: `${prefix} - ${target.name}`
+                                              });
+                                            }}
+                                          >
+                                            {/* Outer Glow / Radar Ring */}
+                                            {isSelected && (
+                                              <circle 
+                                                cx={target.x} 
+                                                cy={target.y} 
+                                                r="14" 
+                                                className="fill-sky-400/20 stroke-sky-400 animate-pulse"
+                                              />
+                                            )}
+                                            {/* Main Interactive Circle */}
+                                            <circle 
+                                              cx={target.x} 
+                                              cy={target.y} 
+                                              r={isSelected ? "8" : "6"} 
+                                              className={cn(
+                                                "transition-all duration-300",
+                                                isSelected 
+                                                  ? (target.type === 'SC' ? "fill-emerald-500 stroke-white stroke-2 shadow-md" : "fill-sky-500 stroke-white stroke-2 shadow-md") 
+                                                  : "fill-slate-300 hover:fill-indigo-400 opacity-60 hover:opacity-100"
+                                              )} 
+                                            />
+                                          </g>
+                                        );
+                                      })}
+                                    </svg>
+
+                                    {/* Helper text */}
+                                    <div className="absolute bottom-2 inset-x-2 text-center pointer-events-none">
+                                      <p className="text-[8px] font-black tracking-wide text-slate-400 bg-white/95 backdrop-blur-md py-1 px-1.5 rounded-lg border border-slate-100 inline-block shadow-sm">
+                                        จิ้มตำแหน่งบนรูปภาพเพื่อระบุพิกัดฉีด
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Right Card: Blue "กรณียาฉีด / วัคซีน" quick methods list */}
+                                <div className="col-span-5 flex flex-col gap-2 bg-gradient-to-br from-indigo-50/50 to-sky-50/50 rounded-2xl border border-indigo-100/60 p-3 justify-between">
+                                  <div className="space-y-2">
+                                    <div className="flex items-center justify-between pb-1.5 border-b border-indigo-100/70">
+                                      <span className="text-[9px] font-black text-indigo-500 uppercase tracking-widest">กรณียาฉีด / วัคซีน</span>
+                                      <div className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+                                    </div>
+                                    
+                                    <span className="text-[8px] font-bold text-slate-400 block leading-tight">
+                                      เลือกเส้นทางบริหารยาเพื่อติดหน้าตำแหน่ง
+                                    </span>
+
+                                    <div className="flex flex-col gap-1.5">
+                                      {[
+                                        { id: 'SC', label: 'SC - ใต้ผิวหนัง', desc: 'Subcutaneous' },
+                                        { id: 'IM', label: 'IM - เข้ากล้ามเนื้อ', desc: 'Intramuscular' },
+                                        { id: 'IV', label: 'IV - เข้าเส้นเลือดดำ', desc: 'Intravenous' },
+                                        { id: 'Fluid', label: 'Fluid - สารน้ำใต้ผิวหนัง', desc: 'SC Fluids' },
+                                      ].map(method => {
+                                        const isSelected = (newItem.usageLocation || '').startsWith(method.id);
+                                        return (
+                                          <button
+                                            key={method.id}
+                                            type="button"
+                                            onClick={() => {
+                                              const currentLoc = (newItem.usageLocation || '').replace(/^(SC|IM|IV|Fluid)\s*-\s*/, '');
+                                              setNewItem({
+                                                ...newItem,
+                                                usageLocation: method.id + (currentLoc ? ` - ${currentLoc}` : ' - ')
+                                              });
+                                            }}
+                                            className={cn(
+                                              "flex items-center justify-between p-2 rounded-xl border text-left transition-all active:scale-95",
+                                              isSelected 
+                                                ? "bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-100" 
+                                                : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100/50 hover:border-slate-300"
+                                            )}
+                                          >
+                                            <span className="text-[10px] font-black">{method.label}</span>
+                                            <span className="text-[8px] opacity-75 font-mono">{method.desc}</span>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+
+                                  <div className="bg-white/80 p-2.5 rounded-xl border border-indigo-100/50 text-[9px] text-slate-500 font-bold leading-normal">
+                                    💡 <span className="font-black text-slate-700">แนะนำ:</span> สามารถพิมพ์ต่อท้ายในช่อง "ตำแหน่งที่ฉีด" เพื่อแต่งเติมรายละเอียด เช่น ซ้าย/ขวา ซ้ำได้
+                                  </div>
+                                </div>
+                              </div>
+                            </>
+                          );
+                        }
+
+                        // Otherwise show Standard Oral Form
+                        return (
+                          <>
+                            {/* Row 1: ชื่อยา + จำนวนที่ใช้ต่อครั้ง + หน่วย */}
+                            <div className="grid grid-cols-12 gap-2">
+                              <div className="col-span-6 flex flex-col gap-1">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ชื่อยา</span>
+                                <input 
+                                  type="text" 
+                                  value={newItem.name || ''} 
+                                  onChange={e => setNewItem({...newItem, name: e.target.value})}
+                                  className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all"
+                                  placeholder="ชื่อยา..."
+                                />
+                              </div>
+                              <div className="col-span-3 flex flex-col gap-1">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">ปริมาณ/ครั้ง</span>
+                                <input 
+                                  type="text" 
+                                  value={newItem.dosage || ''} 
+                                  onChange={e => setNewItem({...newItem, dosage: e.target.value})}
+                                  className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-2 py-2 text-xs font-black text-center focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all"
+                                  placeholder="จำนวน..."
+                                />
+                              </div>
+                              <div className="col-span-3 flex flex-col gap-1">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">หน่วย</span>
+                                <select 
+                                  value={newItem.unit || 'เม็ด'} 
+                                  onChange={e => setNewItem({...newItem, unit: e.target.value})}
+                                  className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-2 py-2 text-xs font-black focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all cursor-pointer"
+                                >
+                                  {['เม็ด', 'มิลลิลิตร', 'แคปซูล', 'ช้อนชา', 'หยด', 'หลอด', 'ซอง', 'ขวด', 'ซีซี', 'g'].map(u => (
+                                    <option key={u} value={u}>{u}</option>
+                                  ))}
+                                </select>
+                              </div>
                             </div>
 
-                            {/* Floating Selection Badge */}
-                            <div className="absolute top-6 left-6 bg-white/95 backdrop-blur-xl px-5 py-3 rounded-[1.5rem] border border-emerald-100 shadow-xl flex flex-col gap-0.5 z-10">
-                              <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] leading-none">ตำแหน่งที่เลือก</span>
-                              <input 
-                                className="text-sm font-black text-emerald-600 bg-transparent border-none outline-none p-0 w-full min-w-[150px] focus:ring-0"
-                                value={newItem.usageLocation || ''}
-                                onChange={(e) => setNewItem({...newItem, usageLocation: e.target.value})}
-                                placeholder="คลี่กเลือกหรือพิมพ์..."
-                              />
+                            {/* Row 2: ประเภทยา (Auto) + ใช้วันละกี่ครั้งต่อวัน */}
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="flex flex-col gap-1">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ประเภทยา (ขึ้น Auto ตามฐานข้อมูล)</span>
+                                <select 
+                                  value={newItem.category || 'Medicine'} 
+                                  onChange={e => setNewItem({...newItem, category: e.target.value})}
+                                  className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all cursor-pointer"
+                                >
+                                  <option value="Medicine">Medicine (ยาทั่วไป)</option>
+                                  <option value="Anti-parasite">Anti-parasite (ยาฆ่าพยาธิ)</option>
+                                  <option value="Vaccine">Vaccine (ยาคุม/วัคซีน)</option>
+                                  <option value="Eye">Eye Medicine (ยาใช้กับดวงตา)</option>
+                                  <option value="Supplies">Supplies (เวชภัณฑ์)</option>
+                                  <option value="Food">Food (อาหาร)</option>
+                                  <option value="Other">Other (อื่น ๆ)</option>
+                                </select>
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ใช้วันละกี่ครั้งต่อวัน</span>
+                                <select 
+                                  value={newItem.interval || '1 ครั้งต่อวัน'} 
+                                  onChange={e => handleIntervalChange(e.target.value)}
+                                  className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all cursor-pointer"
+                                >
+                                  <option value="1 ครั้งต่อวัน">1 ครั้งต่อวัน</option>
+                                  <option value="2 ครั้งต่อวัน">2 ครั้งต่อวัน</option>
+                                  <option value="3 ครั้งต่อวัน">3 ครั้งต่อวัน</option>
+                                  <option value="4 ครั้งต่อวัน">4 ครั้งต่อวัน</option>
+                                  <option value="ทุก 24 ชั่วโมง">ทุก 24 ชั่วโมง</option>
+                                  <option value="ทุก 12 ชั่วโมง">ทุก 12 ชั่วโมง</option>
+                                  <option value="ทุก 8 ชั่วโมง">ทุก 8 ชั่วโมง</option>
+                                  <option value="ทุก 6 ชั่วโมง">ทุก 6 ชั่วโมง</option>
+                                  <option value="ทุก 4 ชั่วโมง">ทุก 4 ชั่วโมง</option>
+                                </select>
+                              </div>
                             </div>
 
-                            <div className="absolute bottom-6 right-6 pointer-events-none">
-                              <div className="bg-emerald-500/10 backdrop-blur-md p-3 rounded-2xl border border-emerald-500/20 flex flex-col items-end gap-1">
-                                <span className="text-[8px] font-bold text-emerald-600 uppercase">Interactive System Map</span>
-                                <div className="flex gap-1">
-                                  {[1,2,3].map(i => <div key={i} className="w-1 h-1 rounded-full bg-emerald-500" />)}
+                            {/* Row 3: เวลาที่กิน + กรณียากิน / ยาพ่น Container (Flexible layout) */}
+                            <div className="flex flex-col gap-3">
+                              <div className="flex flex-col gap-1">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">เวลาที่กิน (ก่อนอาหาร / หลังอาหาร / กินตามเวลา)</span>
+                                <select 
+                                  value={newItem.timingMeal === 'Before' ? 'ก่อนอาหาร' : newItem.timingMeal === 'After' ? 'หลังอาหาร' : newItem.timingMeal === 'With' ? 'กินพร้อมอาหาร' : 'กินตามเวลา'} 
+                                  onChange={e => handleTimingMealChange(e.target.value)}
+                                  className="w-full bg-slate-50/50 rounded-xl border border-slate-100 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all cursor-pointer"
+                                >
+                                  <option value="ก่อนอาหาร">ก่อนอาหาร (Before Meal)</option>
+                                  <option value="หลังอาหาร">หลังอาหาร (After Meal)</option>
+                                  <option value="กินพร้อมอาหาร">กินพร้อมอาหาร (With Meal)</option>
+                                  <option value="กินตามเวลา">กินตามเวลา (Interval/Other)</option>
+                                </select>
+                              </div>
+
+                              {/* Blue/Gray Container: กรณียากิน / ยาพ่น */}
+                              <div className="bg-sky-50/30 border border-sky-100 rounded-2xl p-4 space-y-4">
+                                <div className="flex items-center justify-between pb-2 border-b border-sky-100/40">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">รายละเอียด (เช้า - ก่อนนอน)</span>
+                                  <span className="text-[9px] font-black bg-sky-100/70 text-sky-600 border border-sky-200 px-2.5 py-1 rounded-lg uppercase tracking-wider">
+                                    กรณียากิน / ยาพ่น
+                                  </span>
+                                </div>
+
+                                {/* Row 4: เช้า, กลางวัน, เย็น, ก่อนนอน Buttons */}
+                                <div className="grid grid-cols-4 gap-1.5">
+                                  {[
+                                    { id: 'morning', label: 'เช้า' },
+                                    { id: 'noon', label: 'กลางวัน' },
+                                    { id: 'evening', label: 'เย็น' },
+                                    { id: 'bedtime', label: 'ก่อนนอน' }
+                                  ].map((f) => {
+                                    const isSelected = !!newItem.frequency?.[f.id as keyof typeof newItem.frequency];
+                                    return (
+                                      <button
+                                        key={f.id}
+                                        type="button"
+                                        onClick={() => setNewItem({
+                                          ...newItem,
+                                          frequency: {
+                                            ...newItem.frequency!,
+                                            [f.id]: !isSelected
+                                          }
+                                        })}
+                                        className={cn(
+                                          "py-2.5 rounded-xl text-xs font-bold border transition-all text-center",
+                                          isSelected 
+                                            ? "bg-sky-500 text-white border-sky-500 shadow-md shadow-sky-100" 
+                                            : "bg-white text-slate-400 border-slate-200 hover:bg-slate-50"
+                                        )}
+                                      >
+                                        {f.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+
+                                {/* Row 5: เวลา (08:00 กับ 20:00) */}
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">เวลา</span>
+                                  <input 
+                                    type="text" 
+                                    value={newItem.timingDetail || ''} 
+                                    onChange={e => setNewItem({...newItem, timingDetail: e.target.value})}
+                                    className="w-full bg-white rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all"
+                                    placeholder="เช่น 08:00 กับ 20:00"
+                                  />
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {[
+                                      '08:00 กับ 20:00',
+                                      '08:00, 12:00, 18:00',
+                                      '08:00, 12:00, 18:00, 21:00',
+                                      '08:00',
+                                      '20:00'
+                                    ].map(t => (
+                                      <button
+                                        key={t}
+                                        type="button"
+                                        onClick={() => setNewItem({...newItem, timingDetail: t})}
+                                        className="text-[9px] font-bold text-sky-600 bg-white border border-sky-100 hover:bg-sky-50 px-2 py-0.5 rounded"
+                                      >
+                                        {t}
+                                      </button>
+                                    ))}
+                                  </div>
                                 </div>
                               </div>
                             </div>
-                          </div>
 
-                          <div className="bg-slate-50/50 p-4 rounded-[2rem] border border-slate-100 space-y-3">
-                            <div className="flex items-center justify-between px-1">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">แมนนวล: ระบุตำแหน่งเอง</span>
-                              <div className="flex gap-2">
-                                <button 
-                                  type="button"
-                                  onClick={() => setNewItem({...newItem, usageLocation: 'ทางเดินหู'})}
-                                  className="text-[9px] font-bold text-slate-600 bg-white px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-100"
-                                >
-                                  Ear Canal
-                                </button>
-                                <button 
-                                  type="button"
-                                  onClick={() => setNewItem({...newItem, usageLocation: 'ผิวหนังชั้นนอก'})}
-                                  className="text-[9px] font-bold text-slate-600 bg-white px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-100"
-                                >
-                                  Skin
-                                </button>
+                            {/* Row 6: ข้อควรระวัง (มีให้เลือกและแบบพิมพ์เองได้) */}
+                            <div className="flex flex-col gap-1">
+                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ข้อควรระวัง (เลือกหรือพิมพ์เองได้)</span>
+                              <input 
+                                type="text" 
+                                value={newItem.purpose || ''} 
+                                onChange={e => setNewItem({...newItem, purpose: e.target.value})}
+                                className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all mb-1"
+                                placeholder="ระบุข้อควรระวัง..."
+                              />
+                              <div className="flex flex-wrap gap-1">
+                                {[
+                                  "ไม่มีข้อควรระวังพิเศษ",
+                                  "เก็บในตู้เย็น",
+                                  "เขย่าขวดก่อนใช้",
+                                  "ทานติดต่อกันจนหมด",
+                                  "ห้ามทานพร้อมนม"
+                                ].map(warn => (
+                                  <button
+                                    key={warn}
+                                    type="button"
+                                    onClick={() => setNewItem({...newItem, purpose: warn})}
+                                    className="text-[9px] font-bold text-slate-500 bg-white border border-slate-200 hover:bg-slate-50 px-2.5 py-0.5 rounded-lg"
+                                  >
+                                    {warn}
+                                  </button>
+                                ))}
                               </div>
                             </div>
-                            <div className="relative group">
-                              <input 
-                                type="text"
-                                value={newItem.usageLocation}
-                                onChange={e => {
-                                  const val = e.target.value;
-                                  const organNames = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+
+                            {/* Advanced Settings: Anatomical Marker & Warnings & Wound Care */}
+                            <details className="group border border-slate-100 rounded-2xl overflow-hidden bg-slate-50/20">
+                              <summary className="flex items-center justify-between p-3.5 cursor-pointer hover:bg-slate-50 transition-colors list-none select-none">
+                                <div className="flex items-center gap-2">
+                                  <PawPrint className="w-3.5 h-3.5 text-emerald-500" />
+                                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">ตำแหน่งบนตัวสัตว์ / ทำแผล (Anatomy & Wound)</span>
+                                </div>
+                                <span className="text-[10px] text-slate-400 group-open:rotate-180 transition-transform">▼</span>
+                              </summary>
+                              <div className="p-4 bg-white border-t border-slate-100 space-y-4">
+                                
+                                {/* Wound Care Setup */}
+                                <div className="p-3 bg-white rounded-xl border border-slate-100 flex flex-col gap-2 shadow-sm">
+                                  <label className="flex items-center gap-3"><input type="checkbox" checked={newItem.refrigerate} onChange={e => setNewItem({...newItem, refrigerate: e.target.checked})} className="w-4 h-4 text-sky-500 rounded border-slate-200" /><span className="text-[10px] font-black text-sky-600 uppercase tracking-widest">เก็บในตู้เย็น</span></label>
+                                  <label className="flex items-center gap-3"><input type="checkbox" checked={newItem.shake} onChange={e => setNewItem({...newItem, shake: e.target.checked})} className="w-4 h-4 text-[#00b4d8] rounded border-slate-200" /><span className="text-[10px] font-black text-[#00b4d8] uppercase tracking-widest">เขย่าก่อนใช้</span></label>
+                                  <label className="flex items-center gap-3 pt-2 border-t border-slate-100"><input type="checkbox" checked={newItem.onCondition} onChange={e => setNewItem({...newItem, onCondition: e.target.checked})} className="w-4 h-4 text-emerald-500 rounded border-slate-200" /><span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">เมื่อมีอาการ</span></label>
                                   
-                                  const allPartsSet = new Set<string>();
-                                  organNames.forEach(name => {
-                                    if (anatomicalMappings[name]) {
-                                      anatomicalMappings[name].forEach(p => allPartsSet.add(p));
-                                    }
-                                  });
-
-                                  setNewItem({
-                                    ...newItem, 
-                                    usageLocation: val,
-                                    anatomicalParts: allPartsSet.size > 0 ? Array.from(allPartsSet) : newItem.anatomicalParts
-                                  });
-                                }}
-                                className="w-full bg-white rounded-2xl border border-emerald-100 px-5 py-3 text-sm outline-none shadow-sm font-bold group-hover:border-emerald-300 transition-all focus:ring-4 focus:ring-emerald-500/10"
-                                placeholder="พิมพ์ระบุตำแหน่ง เช่น ตาซ้าย, กระดูกสันหลังส่วนอก..."
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="space-y-1">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">ปริมาณ/ครั้ง</span>
-                          <div className="flex gap-2">
-                            <div className="flex items-center bg-white rounded-xl border border-emerald-100 overflow-hidden shadow-sm">
-                              <button type="button" onClick={() => setNewItem({...newItem, dosage: String(Math.max(0, Number(newItem.dosage) - 0.5))})} className="p-2.5 hover:bg-slate-50 text-slate-400"><Minus className="w-3 h-3" /></button>
-                              <input type="text" value={newItem.dosage} onChange={e => setNewItem({...newItem, dosage: e.target.value})} className="w-10 text-center text-xs font-black border-none outline-none" />
-                              <button type="button" onClick={() => setNewItem({...newItem, dosage: String(Number(newItem.dosage) + 0.5)})} className="p-2.5 hover:bg-slate-50 text-slate-400"><Plus className="w-3 h-3" /></button>
-                            </div>
-                            <select 
-                              value={newItem.unit}
-                              onChange={e => setNewItem({...newItem, unit: e.target.value})}
-                              className="flex-1 bg-white rounded-xl border border-emerald-100 px-3 py-2.5 text-xs font-bold shadow-sm"
-                            >
-                              {['เม็ด', 'มิลลิลิตร', 'แคปซูล', 'ช้อนชา', 'หยด'].map(u => (
-                                <option key={u} value={u}>{u}</option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-
-                        {!newItem.woundCare && (
-                          <>
-                            <div className="space-y-2 pt-2">
-                              <span className="text-xs font-black text-slate-400 uppercase tracking-widest">เวลา</span>
-                              {['Before', 'After', 'With'].map(m => (
-                                <div key={m} className={cn(
-                                  "p-3 rounded-2xl transition-all border",
-                                  newItem.timingMeal === m ? "bg-white border-emerald-200 shadow-xl shadow-emerald-50/50" : "bg-transparent border-transparent"
-                                )}>
-                                  <div className="flex items-center gap-3">
-                                    <input type="radio" checked={newItem.timingMeal === m} onChange={() => setNewItem({...newItem, timingMeal: m as any})} className="w-4 h-4 text-emerald-500 shadow-sm" />
-                                    <span className="text-xs font-black text-slate-700 uppercase">{m} Meals</span>
-                                    {newItem.timingMeal === m && (
-                                      <input type="text" value={newItem.timingDetail} onChange={e => setNewItem({...newItem, timingDetail: e.target.value})} className="flex-1 bg-slate-50 rounded-lg border-none px-2 py-1 text-[9px] font-bold outline-none" placeholder="คำอธิบาย..." />
+                                  <div className="pt-2 border-t border-slate-100 space-y-2">
+                                    <label className="flex items-center gap-3">
+                                      <input 
+                                        type="checkbox" 
+                                        checked={newItem.woundCare} 
+                                        onChange={e => setNewItem({...newItem, woundCare: e.target.checked})} 
+                                        className="w-4 h-4 text-rose-500 rounded border-slate-200" 
+                                      />
+                                      <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest">ทำแผล</span>
+                                    </label>
+                                    {newItem.woundCare && (
+                                      <input 
+                                        type="text"
+                                        value={newItem.woundCareDescription}
+                                        onChange={e => setNewItem({...newItem, woundCareDescription: e.target.value})}
+                                        placeholder="รายละเอียดการทำแผล..."
+                                        className="w-full bg-rose-50/50 rounded-lg border border-rose-100 px-3 py-1.5 text-xs font-bold outline-none placeholder:text-rose-300 text-rose-700"
+                                      />
                                     )}
                                   </div>
                                 </div>
-                              ))}
-                            </div>
 
-                            <div className="grid grid-cols-2 gap-2">
-                              {['morning', 'noon', 'evening', 'bedtime'].map(f => (
-                                <button
-                                  key={f}
-                                  type="button"
-                                  onClick={() => setNewItem({...newItem, frequency: {...newItem.frequency!, [f]: !newItem.frequency![f as keyof typeof newItem.frequency]}})}
-                                  className={cn(
-                                    "py-3 rounded-xl text-sm font-bold border transition-all shadow-sm",
-                                    newItem.frequency?.[f as keyof typeof newItem.frequency] ? "bg-sky-500 text-white border-sky-500 shadow-lg shadow-sky-100" : "bg-white text-slate-300 border-slate-100"
-                                  )}
-                                >
-                                  {f === 'morning' ? 'เช้า' : f === 'noon' ? 'กลางวัน' : f === 'evening' ? 'เย็น' : 'ก่อนนอน'}
-                                </button>
-                              ))}
-                            </div>
+                                {/* Anatomy marker system */}
+                                <div className="space-y-3 relative">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex flex-col">
+                                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Anatomical Marker</span>
+                                      <span className="text-[8px] text-emerald-500 font-bold">จิ้มที่อวัยวะหรือส่วนต่างๆ เพื่อระบุตำแหน่ง</span>
+                                    </div>
+                                    <button 
+                                      type="button"
+                                      onClick={() => setNewItem({...newItem, usageLocation: ''})}
+                                      className="text-[8px] font-bold text-rose-500 uppercase px-2 py-1 bg-rose-50 rounded hover:bg-rose-100 transition-all border border-rose-100"
+                                    >
+                                      รีเซ็ตตำแหน่ง
+                                    </button>
+                                  </div>
+                                  
+                                  <div 
+                                    className="relative aspect-[4/3] bg-white rounded-2xl border border-slate-100 group shadow-md overflow-hidden cursor-zoom-in hover:shadow-emerald-100/20 transition-all duration-500"
+                                    onClick={() => setIsAnatomyZoomed(true)}
+                                  >
+                                    <div className="absolute inset-0 pointer-events-none group-hover:bg-black/5 transition-colors z-[1]" />
+                                    <div className="w-full h-full pointer-events-none">
+                                      <AnatomyMap 
+                                        onSelect={() => {}} 
+                                        selectedLocations={newItem.anatomicalParts || []}
+                                        customSvg={customAnatomySvg}
+                                      />
+                                    </div>
+                                    
+                                    <div className="absolute top-3 right-3 w-8 h-8 bg-white/90 backdrop-blur-xl rounded-xl border border-slate-100 shadow-md flex items-center justify-center text-emerald-500 opacity-0 group-hover:opacity-100 transition-all transform scale-90 group-hover:scale-100 z-10">
+                                      <Search className="w-4 h-4" />
+                                    </div>
+
+                                    <div className="absolute top-3 left-3 bg-white/95 backdrop-blur-xl px-3 py-1.5 rounded-xl border border-slate-100 shadow-md flex flex-col gap-0.5 z-10 pointer-events-none">
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider leading-none">ตำแหน่งที่เลือก</span>
+                                        <Search className="w-2.5 h-2.5 text-slate-400" />
+                                      </div>
+                                      <div className="text-xs font-black text-emerald-600 truncate max-w-[120px]">
+                                        {newItem.usageLocation || 'คลิกเพื่อขยาย...'}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100 space-y-2">
+                                    <div className="flex items-center justify-between px-1">
+                                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">แมนนวลระบุเอง</span>
+                                      <div className="flex gap-1">
+                                        <button 
+                                          type="button"
+                                          onClick={() => setNewItem({...newItem, usageLocation: 'ทางเดินหู'})}
+                                          className="text-[8px] font-bold text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200 hover:bg-slate-100"
+                                        >
+                                          Ear Canal
+                                        </button>
+                                        <button 
+                                          type="button"
+                                          onClick={() => setNewItem({...newItem, usageLocation: 'ผิวหนังชั้นนอก'})}
+                                          className="text-[8px] font-bold text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200 hover:bg-slate-100"
+                                        >
+                                          Skin
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <input 
+                                      type="text"
+                                      value={newItem.usageLocation}
+                                      onChange={e => {
+                                        const val = e.target.value;
+                                        const organNames = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                                        const allPartsSet = new Set<string>();
+                                        organNames.forEach(name => {
+                                          if (anatomicalMappings[name]) {
+                                            anatomicalMappings[name].forEach(p => allPartsSet.add(p));
+                                          }
+                                        });
+                                        setNewItem({
+                                          ...newItem, 
+                                          usageLocation: val,
+                                          anatomicalParts: allPartsSet.size > 0 ? Array.from(allPartsSet) : newItem.anatomicalParts
+                                        });
+                                      }}
+                                      className="w-full bg-white rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-emerald-500/10"
+                                      placeholder="พิมพ์ระบุระเปรี๊ยบ เช่น หูขวา..."
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            </details>
                           </>
-                        )}
+                        );
+                      })()}
 
-                        <div className="p-4 bg-white/50 rounded-2xl border border-emerald-50 flex flex-col gap-2">
-                          <label className="flex items-center gap-3"><input type="checkbox" checked={newItem.refrigerate} onChange={e => setNewItem({...newItem, refrigerate: e.target.checked})} className="w-5 h-5 text-sky-500 rounded border-slate-200" /><span className="text-xs font-black text-sky-600 uppercase tracking-widest">เก็บในตู้เย็น</span></label>
-                          <label className="flex items-center gap-3"><input type="checkbox" checked={newItem.shake} onChange={e => setNewItem({...newItem, shake: e.target.checked})} className="w-5 h-5 text-[#00b4d8] rounded border-slate-200" /><span className="text-xs font-black text-[#00b4d8] uppercase tracking-widest">เขย่าก่อนใช้</span></label>
-                          <label className="flex items-center gap-3 pt-2 border-t border-emerald-50"><input type="checkbox" checked={newItem.onCondition} onChange={e => setNewItem({...newItem, onCondition: e.target.checked})} className="w-5 h-5 text-emerald-500 rounded border-slate-200" /><span className="text-xs font-black text-emerald-600 uppercase tracking-widest">เมื่อมีอาการ</span></label>
-                          
-                          <div className="pt-2 border-t border-emerald-50 space-y-3">
-                            <label className="flex items-center gap-3">
-                              <input 
-                                type="checkbox" 
-                                checked={newItem.woundCare} 
-                                onChange={e => setNewItem({...newItem, woundCare: e.target.checked})} 
-                                className="w-5 h-5 text-rose-500 rounded border-slate-200" 
-                              />
-                              <span className="text-xs font-black text-rose-600 uppercase tracking-widest">ทำแผล</span>
-                            </label>
-                            {newItem.woundCare && (
-                              <input 
-                                type="text"
-                                value={newItem.woundCareDescription}
-                                onChange={e => setNewItem({...newItem, woundCareDescription: e.target.value})}
-                                placeholder="รายละเอียดการทำแผล..."
-                                className="w-full bg-rose-50/50 rounded-xl border border-rose-100 px-4 py-2 text-xs font-bold shadow-sm outline-none placeholder:text-rose-300 text-rose-700"
-                              />
-                            )}
-                          </div>
+                      {/* Row 7: ราคา (บาท) + Confirm Button */}
+                      <div className="grid grid-cols-12 gap-2 pt-2 border-t border-slate-50">
+                        <div className="col-span-5 flex flex-col gap-1">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ราคา (บาท)</span>
+                          <input 
+                            type="number" 
+                            value={newItem.price || ''} 
+                            onChange={e => setNewItem({...newItem, price: Number(e.target.value)})}
+                            className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-black focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all"
+                            placeholder="0"
+                          />
                         </div>
+                        <div className="col-span-7 flex items-end">
+                          <button 
+                            type="button" 
+                            onClick={addItem}
+                            className="w-full bg-emerald-500 text-white py-2 rounded-xl text-xs font-black uppercase tracking-wider shadow-lg shadow-emerald-500/15 hover:bg-emerald-600 active:scale-95 transition-all text-center"
+                          >
+                            Confirm
+                          </button>
+                        </div>
+                      </div>�
 
-                        <button 
-                          type="button"
-                          onClick={() => {
-                            addItem();
-                          }}
-                          className="w-full bg-emerald-500 text-white py-5 rounded-2xl text-xs font-black uppercase tracking-[0.2em] shadow-2xl shadow-emerald-100 hover:bg-emerald-600 transition-all active:scale-95"
-                        >
-                          Confirm & Add Medication
-                        </button>
-                      </div>
                     </div>
                   )}
 
@@ -2584,6 +3672,20 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                     title="เลื่อนลง"
                   >
                     <ChevronDown className="w-8 h-8 group-hover/btn:translate-y-1 transition-transform" />
+                  </button>
+
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setNewItem({
+                        ...newItem,
+                        usageLocation: '',
+                        anatomicalParts: []
+                      });
+                    }}
+                    className="mt-4 px-6 py-3 bg-white/80 backdrop-blur-sm text-rose-500 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-rose-50 transition-all border border-rose-100 shadow-xl shadow-rose-500/10 active:scale-95 whitespace-nowrap"
+                  >
+                    ล้างพื้นที่ทั้งหมด
                   </button>
                 </div>
 

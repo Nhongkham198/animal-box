@@ -39,7 +39,7 @@ export default function Sidebar({
   handleLogout
 }: SidebarProps) {
   const { user, userRole } = useAuth();
-  const { clinicName } = useClinic();
+  const { clinicName, clinicLogo } = useClinic();
 
   const navGroups = [
     { id: 'dashboard', label: 'HOME', icon: LayoutDashboard },
@@ -118,7 +118,7 @@ export default function Sidebar({
           ) : (
             <div className="w-10 h-10 bg-white rounded-xl p-1 flex items-center justify-center overflow-hidden shadow-sm">
               <img 
-                src="https://i.postimg.cc/44qTnjwG/logo-2.webp" 
+                src={clinicLogo} 
                 className="w-full h-full object-contain" 
                 alt="Logo"
                 referrerPolicy="no-referrer"
@@ -130,7 +130,7 @@ export default function Sidebar({
           <div className="ml-2 flex items-center gap-3">
             <div className="w-10 h-10 bg-white rounded-xl p-1 flex items-center justify-center overflow-hidden shadow-sm">
               <img 
-                src="https://i.postimg.cc/44qTnjwG/logo-2.webp" 
+                src={clinicLogo} 
                 className="w-full h-full object-contain" 
                 alt="Logo"
                 referrerPolicy="no-referrer"
