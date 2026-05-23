@@ -68,6 +68,9 @@ interface IPDRecord {
   boardingFeedingMealTimes?: string[];
   boardingFeedingDaily?: boolean;
   boardingWalking?: boolean;
+  boardingRoomSize?: string;
+  boardingBathing?: boolean;
+  boardingBathingPrice?: number;
   vaccinationPhoto?: string;
   vaccinationDate?: string;
   vaccinationNextDate?: string;
@@ -103,6 +106,9 @@ export default function IPDList() {
     boardingFeedingMealTimes: [] as string[],
     boardingFeedingDaily: false,
     boardingWalking: false,
+    boardingRoomSize: 'Small',
+    boardingBathing: false,
+    boardingBathingPrice: 0,
     vaccineName: '',
     vaccinationDate: '',
     vaccinationNextDate: '',
@@ -291,6 +297,9 @@ export default function IPDList() {
         boardingFeedingMealTimes: [],
         boardingFeedingDaily: false,
         boardingWalking: false,
+        boardingRoomSize: 'Small',
+        boardingBathing: false,
+        boardingBathingPrice: 0,
         vaccineName: '',
         vaccinationDate: '',
         vaccinationNextDate: '',
@@ -456,8 +465,18 @@ export default function IPDList() {
                         </div>
                         
                         <div className="flex flex-wrap gap-1.5 mt-0.5">
-                          {(record.isBoarding && (record.boardingFeedingMeal || record.boardingFeedingDaily || record.boardingWalking)) && (
+                          {(record.isBoarding && (record.boardingFeedingMeal || record.boardingFeedingDaily || record.boardingWalking || record.boardingRoomSize || record.boardingBathing)) && (
                             <>
+                              {record.boardingRoomSize && (
+                                <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded-lg text-[9px] font-black uppercase border border-blue-200 flex items-center gap-1.5">
+                                  <div className="w-1 h-1 rounded-full bg-blue-600" />
+                                  ห้อง: {
+                                    record.boardingRoomSize === 'Small' ? 'ห้องเล็ก' :
+                                    record.boardingRoomSize === 'Large' ? 'ห้องใหญ่' :
+                                    record.boardingRoomSize === 'Cage' ? 'กรง' : record.boardingRoomSize
+                                  }
+                                </span>
+                              )}
                               {record.boardingFeedingMeal && (
                                 <span className="px-2 py-1 bg-sky-100 text-sky-700 rounded-lg text-[9px] font-black uppercase border border-sky-200 flex items-center gap-1.5">
                                   <div className="w-1 h-1 rounded-full bg-sky-600" />
@@ -474,6 +493,12 @@ export default function IPDList() {
                                 <span className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded-lg text-[9px] font-black uppercase border border-emerald-100 flex items-center gap-1.5">
                                   <Check className="w-2 h-2" />
                                   พาเดินเล่น
+                                </span>
+                              )}
+                              {record.boardingBathing && (
+                                <span className="px-2 py-1 bg-teal-100 text-teal-700 rounded-lg text-[9px] font-black uppercase border border-teal-250 flex items-center gap-1.5 animate-pulse">
+                                  <Check className="w-2.5 h-2.5 text-teal-600" />
+                                  อาบน้ำก่อนกลับ (฿{record.boardingBathingPrice || '0'})
                                 </span>
                               )}
                             </>
@@ -912,6 +937,70 @@ export default function IPDList() {
                                   </div>
                                   <span className={cn("text-xs font-bold", newRecord.boardingWalking ? "text-sky-700" : "text-slate-500")}>พาเดินเล่น</span>
                                 </div>
+                              </div>
+
+                              {/* Room Size Option */}
+                              <div className="space-y-2.5 mt-2 bg-white p-5 rounded-3xl border border-slate-150 shadow-sm">
+                                <label className="text-[10px] font-black text-sky-600 uppercase tracking-widest ml-1 block">ขนาดห้อง (Boarding Room Size)</label>
+                                <div className="grid grid-cols-3 gap-3">
+                                  {[
+                                    { value: 'Small', label: 'ห้องเล็ก' },
+                                    { value: 'Large', label: 'ห้องใหญ่' },
+                                    { value: 'Cage', label: 'กรง' }
+                                  ].map((room) => (
+                                    <button
+                                      key={room.value}
+                                      type="button"
+                                      onClick={() => setNewRecord({ ...newRecord, boardingRoomSize: room.value })}
+                                      className={cn(
+                                        "px-4 py-3 rounded-2xl text-xs font-bold transition-all border-2 flex items-center justify-center gap-1.5",
+                                        newRecord.boardingRoomSize === room.value
+                                          ? "bg-sky-500 border-sky-500 text-white shadow-lg shadow-sky-200"
+                                          : "bg-white border-slate-100 text-slate-500 hover:border-sky-200"
+                                      )}
+                                    >
+                                      {newRecord.boardingRoomSize === room.value && <Check className="w-3.5 h-3.5" />}
+                                      {room.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Bathing before checkout Option */}
+                              <div className="p-5 rounded-3xl border border-slate-150 bg-white shadow-sm space-y-4">
+                                <div 
+                                  className="flex items-center gap-3 cursor-pointer select-none"
+                                  onClick={() => setNewRecord({ ...newRecord, boardingBathing: !newRecord.boardingBathing })}
+                                >
+                                  <div className={cn(
+                                    "w-5 h-5 rounded border-2 flex items-center justify-center transition-all shrink-0",
+                                    newRecord.boardingBathing ? "border-sky-500 bg-sky-500" : "border-slate-200 bg-white"
+                                  )}>
+                                    {newRecord.boardingBathing && <Check className="w-3.5 h-3.5 text-white" />}
+                                  </div>
+                                  <div className="flex-1">
+                                    <span className={cn("text-xs font-black block", newRecord.boardingBathing ? "text-sky-700" : "text-slate-600")}>
+                                      ก่อนกลับต้องการอาบน้ำ (Bath before Checkout)
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 font-bold block mt-0.5">เลือกหากต้องการให้บริการอาบน้ำสัตว์เลี้ยงก่อนเจ้าของรับกลับ</span>
+                                  </div>
+                                </div>
+
+                                {newRecord.boardingBathing && (
+                                  <div className="ml-8 space-y-2 animate-in fade-in slide-in-from-top-1 duration-300">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block">ระบุราคาค่าอาบน้ำ (Bathing Price)</label>
+                                    <div className="relative">
+                                      <span className="absolute left-5 top-1/2 -translate-y-1/2 font-black text-sky-400 text-xs">฿</span>
+                                      <input
+                                        type="number"
+                                        placeholder="ราคาบริการอาบน้ำ..."
+                                        value={newRecord.boardingBathingPrice || ''}
+                                        onChange={(e) => setNewRecord({ ...newRecord, boardingBathingPrice: Number(e.target.value) })}
+                                        className="w-full pl-10 pr-5 py-3.5 bg-sky-50/20 border-2 border-transparent focus:border-sky-300 focus:bg-white rounded-2xl transition-all outline-none font-bold text-slate-705 text-xs"
+                                      />
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
 

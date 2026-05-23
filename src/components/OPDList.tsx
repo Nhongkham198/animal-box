@@ -52,6 +52,7 @@ import {
 } from '../firebase';
 import { useAsyncError } from '../hooks/useAsyncError';
 import { useAuth } from '../contexts/AuthContext';
+import { useClinic } from '../contexts/ClinicContext';
 import { cn } from '../lib/utils';
 import { AnatomyMap } from './AnatomyMap';
 import { 
@@ -148,9 +149,28 @@ interface OPDQueueItem {
   status: string;
 }
 
+const getEyeWarningsText = (item: any) => {
+  const parts: string[] = [];
+  if (item.refrigerate) parts.push("ควรเก็บในที่เย็น");
+  if (item.shake) parts.push("เขย่าก่อนใช้");
+  if (item.onCondition) parts.push("เมื่อมีอาการ");
+  if (item.woundCare) {
+    if (item.woundCareDescription) {
+      parts.push(`ทำแผล: ${item.woundCareDescription}`);
+    } else {
+      parts.push("ทำแผล");
+    }
+  }
+  if (item.timingDetail) {
+    parts.push(item.timingDetail);
+  }
+  return parts.length > 0 ? parts.join(" • ") : "ควรเก็บในที่เย็น";
+};
+
 export default function OPDList({ setActiveView }: { setActiveView: (view: any) => void }) {
   const throwError = useAsyncError();
   const { user, isAuthReady, isStaff } = useAuth();
+  const { clinicName, clinicAddress, clinicPhone, clinicLogo } = useClinic();
   const [records, setRecords] = useState<OPDRecord[]>([]);
   const [opdQueue, setOpdQueue] = useState<OPDQueueItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -269,6 +289,26 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
   const [inventoryProducts, setInventoryProducts] = useState<any[]>([]);
   const [medicationSearchQuery, setMedicationSearchQuery] = useState('');
   const [showMedicationSuggestions, setShowMedicationSuggestions] = useState(false);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [isWoundCareFocused, setIsWoundCareFocused] = useState(false);
+  const [isWoundCareEditFocused, setIsWoundCareEditFocused] = useState(false);
+  const [printPreviewItem, setPrintPreviewItem] = useState<any | null>(null);
+  const [printerConfig, setPrinterConfig] = useState<any>({ labelWidth: 100, labelHeight: 80 });
+
+  useEffect(() => {
+    if (printPreviewItem) {
+      try {
+        const savedLocal = localStorage.getItem('printer_config');
+        if (savedLocal) {
+          setPrinterConfig(JSON.parse(savedLocal));
+        } else {
+          setPrinterConfig({ labelWidth: 100, labelHeight: 80 });
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }, [printPreviewItem]);
   const medicationSuggestionsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -826,6 +866,303 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, 'opd_records');
     }
+  };
+
+  const getFrequencyCount = () => {
+    if (!newItem.frequency) return 0;
+    let count = 0;
+    if (newItem.frequency.morning) count++;
+    if (newItem.frequency.noon) count++;
+    if (newItem.frequency.evening) count++;
+    if (newItem.frequency.bedtime) count++;
+    return count || 1;
+  };
+
+  const getFrequencySlotsText = () => {
+    if (!newItem.frequency) return '';
+    const slots: string[] = [];
+    if (newItem.frequency.morning) slots.push('เช้า');
+    if (newItem.frequency.noon) slots.push('กลางวัน');
+    if (newItem.frequency.evening) slots.push('เย็น');
+    if (newItem.frequency.bedtime) slots.push('ก่อนนอน');
+    return slots.join(' - ');
+  };
+
+  const calculateAge = (birthDateStr?: string) => {
+    if (!birthDateStr) return '-';
+    try {
+      const birthDate = new Date(birthDateStr);
+      if (isNaN(birthDate.getTime())) return '-';
+      const now = new Date();
+      let years = now.getFullYear() - birthDate.getFullYear();
+      let months = now.getMonth() - birthDate.getMonth();
+      if (months < 0 || (months === 0 && now.getDate() < birthDate.getDate())) {
+        years--;
+        months += 12;
+      }
+      if (years > 0) {
+        return `${years} ปี ${months} เดือน`;
+      }
+      return `${months} เดือน`;
+    } catch (e) {
+      return '-';
+    }
+  };
+
+  const printPrescriptionLabel = (item: any) => {
+    setPrintPreviewItem(item);
+  };
+
+  const executeRealPrint = (item: any) => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const petAge = selectedPatient ? calculateAge(selectedPatient.birthDate) : '-';
+    const thaiDateStr = new Date().toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const timeStr = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+
+    // Compute frequencies
+    const slots: string[] = [];
+    if (item.frequency?.morning) slots.push('เช้า');
+    if (item.frequency?.noon) slots.push('กลางวัน');
+    if (item.frequency?.evening) slots.push('เย็น');
+    if (item.frequency?.bedtime) slots.push('ก่อนนอน');
+    const frequencySlotsText = slots.join(' - ');
+    const freqCount = slots.length || 1;
+
+    let timingMealText = 'กินตามเวลา';
+    if (item.timingMeal === 'Before') timingMealText = 'ก่อนอาหาร';
+    else if (item.timingMeal === 'After') timingMealText = 'หลังอาหาร';
+    else if (item.timingMeal === 'With') timingMealText = 'ทานพร้อมอาหาร';
+
+    const conditionWarnings: string[] = [];
+    if (item.refrigerate) conditionWarnings.push('เก็บในตู้เย็น ห้ามแช่แข็ง');
+    if (item.shake) conditionWarnings.push('เขย่าขวดก่อนใช้');
+    if (item.onCondition) conditionWarnings.push('เมื่อมีอาการ');
+    if (item.timingDetail) conditionWarnings.push(item.timingDetail);
+    if (conditionWarnings.length === 0) {
+      conditionWarnings.push('ทานจนกว่าจะหมด');
+    }
+
+    let printWidth = 100;
+    let printHeight = 80;
+    try {
+      const savedLocal = localStorage.getItem('printer_config');
+      if (savedLocal) {
+        const parsed = JSON.parse(savedLocal);
+        if (parsed.labelWidth) printWidth = parsed.labelWidth;
+        if (parsed.labelHeight) printHeight = parsed.labelHeight;
+      }
+    } catch (e) {
+      console.warn("Failed to load printer size config for printing:", e);
+    }
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Label - ${item.name}</title>
+          <style>
+            @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;700;800&display=swap');
+            @page { size: ${printWidth}mm ${printHeight}mm; margin: 0; }
+            body { 
+              font-family: 'Sarabun', sans-serif; 
+              margin: 0; 
+              padding: 5mm; 
+              box-sizing: border-box;
+              width: ${printWidth}mm;
+              height: ${printHeight}mm;
+              display: flex;
+              flex-direction: column;
+              justify-content: space-between;
+              color: #1e293b;
+            }
+            .border-box {
+              border: 2px solid #000000;
+              border-radius: 4px;
+              padding: 3mm;
+              height: 100%;
+              display: flex;
+              flex-direction: column;
+              justify-content: space-between;
+            }
+            .row {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              font-size: 11px;
+              margin-bottom: 4px;
+            }
+            .field {
+              font-weight: bold;
+              border-bottom: 1px dotted #94a3b8;
+              flex: 1;
+              margin-left: 4px;
+              padding-bottom: 1px;
+              color: #0f172a;
+            }
+            .drug-title {
+              font-size: 14px;
+              font-weight: 800;
+              color: #000000;
+              margin: 6px 0;
+              text-align: center;
+              border-bottom: 2px solid #334155;
+              padding-bottom: 4px;
+            }
+            .usage {
+              font-size: 13px;
+              font-weight: 700;
+              text-align: center;
+              margin-top: 4px;
+            }
+            .timing {
+              font-size: 13px;
+              font-weight: 800;
+              color: #0f172a;
+              text-align: center;
+              margin-top: 4px;
+            }
+            .warnings {
+              font-size: 13px;
+              font-weight: 800;
+              color: #ef4444;
+              text-align: center;
+              margin-top: 6px;
+              text-transform: uppercase;
+            }
+            .footer {
+              display: flex;
+              align-items: center;
+              border-top: 1px solid #cbd5e1;
+              padding-top: 4px;
+              margin-top: auto;
+            }
+            .logo {
+              width: 10mm;
+              height: 10mm;
+              border-radius: 50%;
+              background: #f59e0b;
+              color: white;
+              font-size: 9px;
+              font-weight: 800;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              margin-right: 6px;
+              flex-shrink: 0;
+            }
+            .clinic-info {
+              font-size: 8px;
+              line-height: 1.2;
+              color: #64748b;
+            }
+            .clinic-name {
+              font-weight: bold;
+              color: #334155;
+              font-size: 9px;
+            }
+          </style>
+        </head>
+         <body>
+           <div class="border-box">
+             <div>
+            ${item.category === 'Eye' ? `
+              <div class="row">
+                <span style="white-space: nowrap;">ชื่อสัตว์เลี้ยง</span>
+                <span class="field" style="margin-right: 8px;">${selectedPatient?.name || newRecord.petName || '-'}</span>
+                <span style="white-space: nowrap;">HN</span>
+                <span class="field" style="max-width: 25mm; margin-right: 8px;">${selectedPatient?.hn || '-'}</span>
+                <span style="white-space: nowrap;">อายุ</span>
+                <span class="field" style="max-width: 15mm;">${petAge}</span>
+              </div>
+              
+              <div class="row" style="margin-top: 6px;">
+                <span style="white-space: nowrap;">ลำดับที่</span>
+                <span class="field" style="max-width: 20mm; margin-right: 8px; text-align: center;">${item.eyeOrder || '1'}</span>
+                <span style="white-space: nowrap;">ชื่อยา</span>
+                <span class="field" style="font-weight: 800;">${item.name} (${item.quantity || 1} ${item.unit || 'ขวด'})</span>
+              </div>
+
+              <div class="usage" style="font-size: 14px; font-weight: 800; margin-top: 10px; border-bottom: 1px dashed #94a3b8; padding-bottom: 6px; text-align: center;">
+                หยอดตา <span style="text-decoration: underline; color: #1e293b;">&nbsp;&nbsp;${item.usageLocation || 'ซ้าย, ขวา'}&nbsp;&nbsp;</span> วันละ <span style="text-decoration: underline; color: #1e293b;">&nbsp;&nbsp;${item.interval || '2 ครั้งต่อวัน'}&nbsp;&nbsp;</span>
+              </div>
+
+              <div class="warnings" style="font-size: 14px; font-weight: 850; color: #ef4444; text-align: center; margin-top: 10px;">
+                ${getEyeWarningsText(item)}
+              </div>
+
+              <div class="row" style="margin-top: 10px; justify-content: flex-end;">
+                <span style="color: #64748b; font-size: 9px; white-space: nowrap;">วว/ดด/ปป: </span>
+                <span class="field" style="max-width: 30mm; text-align: center; flex: none; font-size: 10px; margin-left: 6px;">${thaiDateStr}</span>
+              </div>
+            ` : `
+              <div class="row">
+                <span style="white-space: nowrap;">ชื่อสัตว์เลี้ยง</span>
+                <span class="field" style="margin-right: 8px;">${selectedPatient?.name || newRecord.petName || '-'}</span>
+                <span style="white-space: nowrap;">HN</span>
+                <span class="field" style="max-width: 25mm; margin-right: 8px;">${selectedPatient?.hn || '-'}</span>
+                <span style="white-space: nowrap;">อายุ</span>
+                <span class="field" style="max-width: 15mm;">${petAge}</span>
+              </div>
+              
+              <div class="row">
+                <span style="white-space: nowrap;">ชื่อเจ้าของ</span>
+                <span class="field" style="margin-right: 8px;">${selectedPatient?.ownerName || '-'}</span>
+                <span style="white-space: nowrap;">วว/ดด/ปป</span>
+                <span class="field" style="max-width: 20mm; margin-right: 8px;">${thaiDateStr}</span>
+                <span style="white-space: nowrap;">เวลา</span>
+                <span class="field" style="max-width: 12mm;">${timeStr}</span>
+              </div>
+
+              <div class="drug-title">
+                ชื่อยา: ${item.name} (${item.quantity || 1} ${item.unit || 'เม็ด'})
+              </div>
+
+              <div class="usage">
+                ${item.usageMethod || 'กิน'}ครั้งละ <span style="font-weight: 850; font-size: 14px; text-decoration: underline;">&nbsp;&nbsp;${item.dosage || '1'}&nbsp;&nbsp;</span> ${item.unit || 'เม็ด'} &nbsp;&nbsp;&nbsp;&nbsp; วันละ <span style="font-weight: 850; font-size: 14px; text-decoration: underline;">&nbsp;&nbsp;${freqCount}&nbsp;&nbsp;</span> ครั้ง
+              </div>
+
+              <div class="timing">
+                ${timingMealText} ${frequencySlotsText ? `เช้า - เย็น (${frequencySlotsText})` : ''}
+              </div>
+
+              <div class="warnings">
+                ${conditionWarnings.join(' • ')}
+              </div>
+            `}
+            </div>
+
+            <div class="footer">
+              ${item.category === 'Eye' ? `
+                <div style="background: #e0f2fe; border: 1.5px solid #0284c7; border-radius: 6px; padding: 3px 10px; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 10px; color: #ef4444; margin-right: 12px;">
+                  กรณียาหยดตา
+                </div>
+              ` : `
+                ${clinicLogo ? `
+                  <div style="width: 10mm; height: 10mm; margin-right: 6px; flex-shrink: 0; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; border: 1px solid #e2e8f0; background: #f8fafc; padding: 1px; box-sizing: border-box;">
+                    <img src="${clinicLogo}" style="max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 50%;" />
+                  </div>
+                ` : `
+                  <div class="logo">โลโก้</div>
+                `}
+              `}
+              <div class="clinic-info">
+                <div class="clinic-name">${clinicName}</div>
+                <div>${clinicAddress}</div>
+                <div>เบอร์ติดต่อ: ${clinicPhone}</div>
+              </div>
+            </div>
+          </div>
+          <script>
+            window.onload = () => {
+              window.print();
+              setTimeout(() => window.close(), 500);
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   const generateRxText = (items: any[]) => {
@@ -1910,35 +2247,372 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                               </div>
                             </div>
                           )}
-                          <div className="flex gap-4">
-                            <div className="flex-1 relative">
-                              <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-300" />
-                              <input 
-                                type="text"
-                                placeholder={newItem.type === 'Oral' ? "Search Oral Medicine..." : (newItem.type === 'Injection' ? "Search Injection..." : "Search Service...") }
-                                value={newItem.name}
-                                onChange={(e) => setNewItem({ ...newItem, name: e.target.value, category: 'Medicine' })}
-                                className="w-full pl-12 pr-6 py-4 bg-white border-none rounded-2xl text-sm font-bold shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none"
-                              />
+                          {newItem.type === 'Oral' ? (
+                            (() => {
+                              const isEyeMedicine = newItem.category === 'Eye';
+                              if (isEyeMedicine) {
+                                return (
+                                  <div className="border-4 border-slate-900 rounded-[2rem] p-6 bg-white flex flex-col gap-4 text-slate-950 relative shadow-sm font-sans">
+                                    {/* Row 1: Pet Name, HN, Age */}
+                                    <div className="grid grid-cols-3 gap-x-4 gap-y-1.5 border-b border-dashed border-slate-100 pb-1.5">
+                                      <div className="flex items-center gap-1.5 min-w-0">
+                                        <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">ชื่อสัตว์เลี้ยง</span>
+                                        <span className="border-b border-dashed border-slate-300 px-1 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0">
+                                          {selectedPatient?.name || newRecord.petName || '-'}
+                                        </span>
+                                      </div>
+                                      
+                                      <div className="flex items-center gap-1.5 min-w-0">
+                                        <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">HN</span>
+                                        <span className="border-b border-dashed border-slate-300 px-1 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0">
+                                          {selectedPatient?.hn || '-'}
+                                        </span>
+                                      </div>
+                                      
+                                      <div className="flex items-center gap-1.5 min-w-0">
+                                        <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">อายุ</span>
+                                        <span className="border-b border-dashed border-slate-300 px-1 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0 whitespace-nowrap">
+                                          {calculateAge(selectedPatient?.birthDate)}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    {/* Row 2: Eye Order (ลำดับที่) & Drug Name (ชื่อยา) with suggestions & Date */}
+                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs font-bold border-b border-dashed border-slate-100 pb-1.5">
+                                      <div className="flex items-center gap-1.5 w-16 shrink-0 min-w-0">
+                                        <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">ลำดับที่</span>
+                                        <span className="border-b border-dashed border-slate-300 px-2 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0">
+                                          {newItem.eyeOrder || '1'}
+                                        </span>
+                                      </div>
+                                      
+                                      <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                                        <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">ชื่อยา</span>
+                                        <div className="flex-1 relative">
+                                          <input 
+                                            type="text"
+                                            value={newItem.name ?? ''}
+                                            onFocus={() => setIsSearchFocused(true)}
+                                            onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
+                                            onChange={(e) => {
+                                              const val = e.target.value;
+                                              setNewItem({ ...newItem, name: val, category: 'Eye' });
+                                              setMedicationSearchQuery(val);
+                                              setShowMedicationSuggestions(true);
+                                            }}
+                                            placeholder="พิมพ์ค้นหายาหยอดตา..."
+                                            className="w-full bg-transparent border-b border-dashed border-slate-400 text-slate-900 font-black text-center text-xs focus:border-deep-sky-500 hover:border-slate-600 outline-none transition-all px-2 pb-0.5"
+                                          />
+                                          {isSearchFocused && filteredMedicationSuggestions.length > 0 && (
+                                            <div className="absolute left-0 right-0 top-full mt-2 bg-white border border-slate-200 rounded-2xl shadow-xl z-50 max-h-48 overflow-y-auto divide-y divide-slate-50">
+                                              {filteredMedicationSuggestions.map(product => (
+                                                <button
+                                                  key={product.id}
+                                                  type="button"
+                                                  onMouseDown={() => {
+                                                    selectMedication(product);
+                                                    setIsSearchFocused(false);
+                                                  }}
+                                                  className="w-full text-left px-4 py-2.5 hover:bg-slate-50 text-[11px] font-bold text-slate-700 flex justify-between items-center transition-colors"
+                                                >
+                                                  <span>{product.name} ({product.genericName || '-'})</span>
+                                                  <span className="bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-lg font-black">{product.price || 0} THB</span>
+                                                </button>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      <div className="flex items-center gap-1 text-[11px] font-bold text-slate-400 shrink-0">
+                                        <span className="whitespace-nowrap shrink-0 text-[10px] font-black uppercase text-slate-400">วว/ดด/ปป</span>
+                                        <span className="border-b border-dashed border-slate-300 px-2 text-slate-600 text-center font-black text-[11px] min-w-[85px]">
+                                          {new Date().toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    {/* Row 3: Eye Drops Usage Detail (หยดตา[ตำแหน่ง] วันละ_________ครั้ง/วัน) */}
+                                    <div className="flex flex-wrap items-center justify-center gap-1.5 text-xs font-black">
+                                      <span className="text-slate-500 whitespace-nowrap text-[11px]">หยอดตา</span>
+                                      <span className="border-b border-dashed border-slate-400 px-3 text-slate-800 text-center font-black text-xs min-w-[70px]">
+                                        {newItem.usageLocation || 'ซ้าย, ขวา'}
+                                      </span>
+                                      <span className="text-slate-500 whitespace-nowrap text-[11px]">วันละ</span>
+                                      <span className="border-b border-dashed border-slate-400 px-3 text-slate-800 text-center font-black text-xs min-w-[80px]">
+                                        {newItem.interval || '2 ครั้งต่อวัน'}
+                                      </span>
+                                    </div>
+
+                                    {/* Row 4: Refrigerator warning */}
+                                    <div className="flex justify-center border-b border-slate-100 pb-2">
+                                      <input 
+                                        type="text"
+                                        value={newItem.timingDetail !== undefined && newItem.timingDetail !== '' ? newItem.timingDetail : getEyeWarningsText({...newItem, timingDetail: ''})}
+                                        onChange={e => setNewItem({...newItem, timingDetail: e.target.value})}
+                                        placeholder="ควรเก็บในที่เย็น"
+                                        className="w-full bg-transparent text-center font-black text-rose-500 text-xs outline-none"
+                                      />
+                                    </div>
+
+                                    {/* Row 6: Print & Billing Row */}
+                                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-slate-100">
+                                      {/* Left side styled blue group marker */}
+                                      <div className="flex-1 min-w-[120px] bg-sky-50 border border-sky-200 rounded-xl py-2 px-3 flex items-center justify-center gap-1.5">
+                                        <Droplets className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                                        <span className="text-sky-700 font-extrabold text-[10px] uppercase tracking-wider">กรณียาหยดตา</span>
+                                      </div>
+
+                                      <div className="flex items-center gap-2">
+                                        <div className="flex flex-col gap-0.5 items-end">
+                                          <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">จำนวนบิล</span>
+                                          <div className="flex items-center gap-1">
+                                            <input 
+                                              type="number"
+                                              value={newItem.quantity ?? ''}
+                                              onChange={(e) => setNewItem({ ...newItem, quantity: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                              className="w-10 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-black text-center outline-none focus:ring-1 focus:ring-sky-400"
+                                            />
+                                          </div>
+                                        </div>
+
+                                        <div className="flex flex-col gap-0.5 items-end">
+                                          <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">ราคา</span>
+                                          <div className="flex items-center gap-1">
+                                            <input 
+                                              type="number"
+                                              value={newItem.price ?? ''}
+                                              onChange={(e) => setNewItem({ ...newItem, price: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                              className="w-14 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-black text-center outline-none focus:ring-1 focus:ring-sky-400"
+                                            />
+                                            <span className="text-[9px] font-bold text-slate-400 uppercase">THB</span>
+                                          </div>
+                                        </div>
+
+                                        <button 
+                                          type="button"
+                                          onClick={() => printPrescriptionLabel(newItem)}
+                                          className="px-3.5 py-1.5 bg-slate-950 hover:bg-slate-900 border border-slate-950 text-white rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1 shadow-sm shrink-0 active:scale-95"
+                                        >
+                                          <Printer className="w-3.5 h-3.5" /> ปริ้นส์
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <div className="border-4 border-slate-900 rounded-[2rem] p-6 bg-white flex flex-col gap-4 text-slate-950 relative shadow-sm font-sans">
+                                  {/* Row 1: Pet Name, HN, Age */}
+                                  <div className="grid grid-cols-3 gap-x-4 gap-y-1.5 border-b border-dashed border-slate-100 pb-1.5">
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">ชื่อสัตว์เลี้ยง</span>
+                                      <span className="border-b border-dashed border-slate-300 px-1 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0">
+                                        {selectedPatient?.name || newRecord.petName || '-'}
+                                      </span>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">HN</span>
+                                      <span className="border-b border-dashed border-slate-300 px-1 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0">
+                                        {selectedPatient?.hn || '-'}
+                                      </span>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">อายุ</span>
+                                      <span className="border-b border-dashed border-slate-300 px-1 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0 whitespace-nowrap">
+                                        {calculateAge(selectedPatient?.birthDate)}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* Row 2: Owner, Date, Time */}
+                                  <div className="grid grid-cols-3 gap-x-4 gap-y-1.5 border-b border-dashed border-slate-100 pb-1.5">
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">ชื่อเจ้าของ</span>
+                                      <span className="border-b border-dashed border-slate-300 px-1 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0">
+                                        {selectedPatient?.ownerName || '-'}
+                                      </span>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">วว/ดด/ปป</span>
+                                      <span className="border-b border-dashed border-slate-300 px-1 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0">
+                                        {new Date().toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                      </span>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">เวลา</span>
+                                      <span className="border-b border-dashed border-slate-300 px-1 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0">
+                                        {new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* Row 3: Drug Name with inline suggestions dropdown */}
+                                  <div className="relative flex flex-col gap-1">
+                                    <div className="flex items-center gap-2 text-sm font-black">
+                                      <span className="text-slate-900 whitespace-nowrap">ชื่อยา</span>
+                                      <div className="flex-1 relative">
+                                        <input 
+                                          type="text"
+                                          value={newItem.name ?? ''}
+                                          onFocus={() => setIsSearchFocused(true)}
+                                          onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            setNewItem({ ...newItem, name: val, category: 'Medicine' });
+                                            setMedicationSearchQuery(val);
+                                            setShowMedicationSuggestions(true);
+                                          }}
+                                          placeholder="พิมพ์ค้นหาชื่อยาเพื่อดึงข้อมูลจากระบบ..."
+                                          className="w-full bg-transparent border-b border-dashed border-slate-400 text-slate-900 font-black text-center text-sm focus:border-emerald-500 hover:border-slate-600 outline-none transition-all px-2 pb-0.5"
+                                        />
+                                        {isSearchFocused && filteredMedicationSuggestions.length > 0 && (
+                                          <div className="absolute left-0 right-0 top-full mt-2 bg-white border border-slate-200 rounded-2xl shadow-xl z-50 max-h-48 overflow-y-auto divide-y divide-slate-50">
+                                            {filteredMedicationSuggestions.map(product => (
+                                              <button
+                                                key={product.id}
+                                                type="button"
+                                                onMouseDown={() => {
+                                                  selectMedication(product);
+                                                  setIsSearchFocused(false);
+                                                }}
+                                                className="w-full text-left px-4 py-2.5 hover:bg-slate-50 text-[11px] font-bold text-slate-700 flex justify-between items-center transition-colors"
+                                              >
+                                                <span>{product.name} ({product.genericName || '-'})</span>
+                                                <span className="bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-lg font-black">{product.price || 0} THB</span>
+                                              </button>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Row 4: Dosage & Frequency */}
+                                  <div className="flex items-center justify-center gap-2 text-xs font-black">
+                                    <span className="text-slate-500 whitespace-nowrap">ทานครั้งละ</span>
+                                    <input 
+                                      type="text"
+                                      value={newItem.dosage ?? ''}
+                                      onChange={e => setNewItem({...newItem, dosage: e.target.value})}
+                                      placeholder="1"
+                                      className="w-16 bg-transparent border-b border-dashed border-slate-400 text-slate-900 text-center font-black text-xs focus:border-emerald-500 outline-none pb-0.5"
+                                    />
+                                    <span className="text-slate-500 whitespace-nowrap ml-2">วันละ</span>
+                                    <span className="border-b border-dashed border-slate-300 px-2 w-12 text-slate-900 text-center font-black text-xs">
+                                      {getFrequencyCount()}
+                                    </span>
+                                    <span className="text-slate-500 whitespace-nowrap">ครั้ง</span>
+                                  </div>
+
+                                  {/* Row 5: Meal Timing summary */}
+                                  <div className="text-center text-[11px] font-black text-slate-800 bg-slate-50 py-2 rounded-xl border border-slate-100/50">
+                                    {newItem.timingMeal === 'Before' ? 'ก่อนอาหาร' : newItem.timingMeal === 'After' ? 'หลังอาหาร' : newItem.timingMeal === 'With' ? 'พร้อมอาหาร' : 'กินตามเวลา'}{' '}
+                                    {getFrequencySlotsText() ? `เช้า - เย็น (${getFrequencySlotsText()})` : ''}
+                                  </div>
+
+                                  {/* Row 6: Warning & Timing Detail input */}
+                                  <div className="flex justify-center border-b border-slate-100 pb-2">
+                                    <input 
+                                      type="text"
+                                      value={newItem.timingDetail ?? ''}
+                                      onChange={e => setNewItem({...newItem, timingDetail: e.target.value})}
+                                      placeholder="ทานติดต่อกันจนหมด"
+                                      className="w-full bg-transparent text-center font-black text-rose-500 text-xs outline-none"
+                                    />
+                                  </div>
+
+                                  {/* Row 7: Clinic Info, logo and print/billing details */}
+                                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                                    <div className="flex items-center gap-2">
+                                      <div className="w-10 h-10 rounded-full bg-slate-50 border border-slate-100 flex items-center justify-center shrink-0 shadow-sm overflow-hidden p-1">
+                                        {clinicLogo ? (
+                                          <img src={clinicLogo} alt="Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                                        ) : (
+                                          <span className="text-slate-400 font-extrabold text-[9px]">โลโก้</span>
+                                        )}
+                                      </div>
+                                      <div className="text-[9px] leading-tight text-slate-500">
+                                        <div className="font-bold text-slate-800">{clinicName}</div>
+                                        <div className="max-w-[130px] truncate">{clinicAddress}</div>
+                                        <div className="font-mono text-slate-400">Tel: {clinicPhone}</div>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex flex-col gap-0.5 items-end">
+                                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">จำนวนบิล</span>
+                                        <div className="flex items-center gap-1">
+                                          <input 
+                                            type="number"
+                                            value={newItem.quantity ?? ''}
+                                            onChange={(e) => setNewItem({ ...newItem, quantity: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                            className="w-10 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-black text-center outline-none focus:ring-1 focus:ring-emerald-400"
+                                          />
+                                        </div>
+                                      </div>
+
+                                      <div className="flex flex-col gap-0.5 items-end">
+                                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">ราคา</span>
+                                        <div className="flex items-center gap-1">
+                                          <input 
+                                            type="number"
+                                            value={newItem.price ?? ''}
+                                            onChange={(e) => setNewItem({ ...newItem, price: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                            className="w-14 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-black text-center outline-none focus:ring-1 focus:ring-emerald-400"
+                                          />
+                                          <span className="text-[9px] font-bold text-slate-400 uppercase">THB</span>
+                                        </div>
+                                      </div>
+
+                                      <button 
+                                        type="button"
+                                        onClick={() => printPrescriptionLabel(newItem)}
+                                        className="px-2.5 py-1.5 bg-slate-950 hover:bg-slate-900 border border-slate-950 text-white rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1 shadow-sm shrink-0 active:scale-95"
+                                      >
+                                        <Printer className="w-3.5 h-3.5" /> ปริ้นส์
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })()
+                          ) : (
+                            <div className="flex gap-4">
+                              <div className="flex-1 relative">
+                                <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-300" />
+                                <input 
+                                  type="text"
+                                  placeholder={newItem.type === 'Injection' ? "Search Injection..." : "Search Service..."}
+                                  value={newItem.name ?? ''}
+                                  onChange={(e) => setNewItem({ ...newItem, name: e.target.value, category: 'Medicine' })}
+                                  className="w-full pl-12 pr-6 py-4 bg-white border-none rounded-2xl text-sm font-bold shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none"
+                                />
+                              </div>
+                              <div className="w-24">
+                                <input 
+                                  type="number"
+                                  value={newItem.quantity ?? ''}
+                                  onChange={(e) => setNewItem({ ...newItem, quantity: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                  className="w-full px-4 py-4 bg-white border-none rounded-2xl text-sm text-center font-bold shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none"
+                                />
+                              </div>
+                              <div className="w-32">
+                                <input 
+                                  type="number"
+                                  placeholder="Price"
+                                  value={newItem.price ?? ''}
+                                  onChange={(e) => setNewItem({ ...newItem, price: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                  className="w-full px-4 py-4 bg-white border-none rounded-2xl text-sm text-center font-black shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none"
+                                />
+                              </div>
                             </div>
-                            <div className="w-24">
-                              <input 
-                                type="number"
-                                value={newItem.quantity}
-                                onChange={(e) => setNewItem({ ...newItem, quantity: Number(e.target.value) })}
-                                className="w-full px-4 py-4 bg-white border-none rounded-2xl text-sm text-center font-bold shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none"
-                              />
-                            </div>
-                            <div className="w-32">
-                              <input 
-                                type="number"
-                                placeholder="Price"
-                                value={newItem.price || ''}
-                                onChange={(e) => setNewItem({ ...newItem, price: Number(e.target.value) })}
-                                className="w-full px-4 py-4 bg-white border-none rounded-2xl text-sm text-center font-black shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none"
-                              />
-                            </div>
-                          </div>
+                          )}
 
                           <button 
                             type="button"
@@ -2636,12 +3310,14 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                     <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest">ต้องการทำแผล (WoundCare)</span>
                                   </label>
                                   {newItem.woundCare && (
-                                    <input 
-                                      type="text"
+                                    <textarea 
+                                      rows={isWoundCareFocused ? 4 : 1}
+                                      onFocus={() => setIsWoundCareFocused(true)}
+                                      onBlur={() => setIsWoundCareFocused(false)}
                                       value={newItem.woundCareDescription || ''}
                                       onChange={e => setNewItem({...newItem, woundCareDescription: e.target.value})}
                                       placeholder="รายละเอียดการผลิตหรือทำแผล..."
-                                      className="w-full bg-rose-50/50 rounded-xl border border-rose-100 px-3 py-1.5 text-xs font-bold outline-none placeholder:text-rose-300 text-rose-600"
+                                      className="w-full bg-rose-50/50 rounded-xl border border-rose-100 px-3 py-2 text-xs font-bold outline-none placeholder:text-rose-300 text-rose-600 resize-none transition-all duration-300 ease-in-out focus:bg-white focus:ring-2 focus:ring-rose-200 shadow-inner focus:shadow-md"
                                     />
                                   )}
                                 </div>
@@ -3144,12 +3820,14 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                       <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest">ทำแผล</span>
                                     </label>
                                     {newItem.woundCare && (
-                                      <input 
-                                        type="text"
+                                      <textarea 
+                                        rows={isWoundCareEditFocused ? 4 : 1}
+                                        onFocus={() => setIsWoundCareEditFocused(true)}
+                                        onBlur={() => setIsWoundCareEditFocused(false)}
                                         value={newItem.woundCareDescription}
                                         onChange={e => setNewItem({...newItem, woundCareDescription: e.target.value})}
                                         placeholder="รายละเอียดการทำแผล..."
-                                        className="w-full bg-rose-50/50 rounded-lg border border-rose-100 px-3 py-1.5 text-xs font-bold outline-none placeholder:text-rose-300 text-rose-700"
+                                        className="w-full bg-rose-50/50 rounded-lg border border-rose-100 px-3 py-2 text-xs font-bold outline-none placeholder:text-rose-300 text-rose-700 resize-none transition-all duration-300 ease-in-out focus:bg-white focus:ring-2 focus:ring-rose-200 focus:shadow-md"
                                       />
                                     )}
                                   </div>
@@ -3878,6 +4556,228 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
           </div>
         )}
       </AnimatePresence>
+
+      {/* Print Preview Modal */}
+      {printPreviewItem && (() => {
+        const item = printPreviewItem;
+        const petAge = selectedPatient ? calculateAge(selectedPatient.birthDate) : '-';
+        const thaiDateStr = new Date().toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        const timeStr = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+
+        // Compute frequencies
+        const slots: string[] = [];
+        if (item.frequency?.morning) slots.push('เช้า');
+        if (item.frequency?.noon) slots.push('กลางวัน');
+        if (item.frequency?.evening) slots.push('เย็น');
+        if (item.frequency?.bedtime) slots.push('ก่อนนอน');
+        const frequencySlotsText = slots.join(' - ');
+        const freqCount = slots.length || 1;
+
+        let timingMealText = 'กินตามเวลา';
+        if (item.timingMeal === 'Before') timingMealText = 'ก่อนอาหาร';
+        else if (item.timingMeal === 'After') timingMealText = 'หลังอาหาร';
+        else if (item.timingMeal === 'With') timingMealText = 'ทานพร้อมอาหาร';
+
+        const conditionWarnings: string[] = [];
+        if (item.refrigerate) conditionWarnings.push('เก็บในตู้เย็น ห้ามแช่แข็ง');
+        if (item.shake) conditionWarnings.push('เขย่าขวดก่อนใช้');
+        if (item.onCondition) conditionWarnings.push('เมื่อมีอาการ');
+        if (item.timingDetail) conditionWarnings.push(item.timingDetail);
+        if (conditionWarnings.length === 0) {
+          conditionWarnings.push('ทานจนกว่าจะหมด');
+        }
+
+        const width = printerConfig?.labelWidth || 100;
+        const height = printerConfig?.labelHeight || 80;
+
+        return (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-[9999] p-4 font-sans">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white rounded-[2rem] w-full max-w-xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[95vh]"
+            >
+              {/* Modal Header */}
+              <div className="px-8 py-6 border-b border-rose-100 flex items-center justify-between bg-gradient-to-r from-rose-50/50 to-indigo-50/20">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center">
+                    <Printer className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-slate-800 text-base">ตัวอย่างก่อนพิมพ์ฉลากยา</h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                      Label Size: {width}mm x {height}mm (ดึงข้อมูลจากหน้า Printer Settings)
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setPrintPreviewItem(null)}
+                  className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-all font-black text-sm"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Label Simulation Canvas Scrollable */}
+              <div className="p-8 flex-1 overflow-y-auto bg-slate-50 border-b border-slate-150 flex flex-col items-center justify-center min-h-[300px]">
+                {/* Physical-like sticker shadow & bounds wrapper */}
+                <div className="text-[11px] font-[800] text-slate-400 mb-3 uppercase tracking-tight">
+                  แบบจำลองใบสติ๊กเกอร์ความร้อน (Thermal Sticker Model)
+                </div>
+
+                <div 
+                  className="bg-white border-2 border-slate-950 p-[5mm] text-slate-900 flex flex-col justify-between shadow-xl relative font-sans select-none rounded-[4px]"
+                  style={{
+                    width: '100%',
+                    maxWidth: '400px',
+                    aspectRatio: `${width} / ${height}`,
+                    minHeight: '260px'
+                  }}
+                >
+                  <div className="h-full flex flex-col justify-between">
+                    <div>
+                      {item.category === 'Eye' ? (
+                        <>
+                          {/* Eye Layout */}
+                          <div className="grid grid-cols-3 gap-1 text-[11px] font-bold border-b border-dashed border-slate-300 pb-2">
+                            <div className="truncate">
+                              <span className="text-slate-500 font-extrabold text-[9px] block">ชื่อสัตว์เลี้ยง</span>
+                              <span className="text-slate-900 block truncate font-black">{selectedPatient?.name || newRecord.petName || '-'}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 font-extrabold text-[9px] block">HN</span>
+                              <span className="text-slate-900 block font-mono font-black">{selectedPatient?.hn || '-'}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 font-extrabold text-[9px] block">อายุ</span>
+                              <span className="text-slate-900 block truncate font-black">{petAge}</span>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-2 mt-2 items-center">
+                            <div>
+                              <span className="text-slate-500 font-extrabold text-[9px] block">ลำดับที่</span>
+                              <span className="text-slate-900 block font-black border border-slate-200 text-center rounded-lg bg-slate-50 py-1">{item.eyeOrder || '1'}</span>
+                            </div>
+                            <div className="col-span-2">
+                              <span className="text-slate-500 font-extrabold text-[9px] block">ชื่อยา</span>
+                              <span className="text-slate-900 block font-black truncate">{item.name} ({item.quantity || 1} {item.unit || 'ขวด'})</span>
+                            </div>
+                          </div>
+
+                          <div className="text-center font-extrabold text-xs text-slate-800 border-b border-dashed border-slate-300 py-3 mt-2 bg-rose-50/20 rounded-xl">
+                            หยอดตา <span className="underline font-black mx-1 text-slate-950">{item.usageLocation || 'ซ้าย, ขวา'}</span> วันละ <span className="underline font-black mx-1 text-slate-950">{item.interval || '2 ครั้งต่อวัน'}</span>
+                          </div>
+
+                          <div className="text-center font-black text-[11px] text-rose-500 py-1.5 mt-2 rounded bg-rose-50/30 border border-dashed border-rose-200 uppercase">
+                            {getEyeWarningsText(item)}
+                          </div>
+
+                          <div className="text-right text-[10px] text-slate-400 mt-2 font-bold">
+                            วว/ดด/ปป: <span className="text-slate-700">{thaiDateStr}</span>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          {/* Standard General Medicine Layout */}
+                          <div className="grid grid-cols-3 gap-1 text-[11px] font-bold border-b border-dashed border-slate-300 pb-1.5">
+                            <div className="truncate">
+                              <span className="text-slate-500 font-extrabold text-[9px] block">ชื่อสัตว์เลี้ยง</span>
+                              <span className="text-slate-900 block truncate font-black">{selectedPatient?.name || newRecord.petName || '-'}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 font-extrabold text-[9px] block">HN</span>
+                              <span className="text-slate-900 block font-mono font-black">{selectedPatient?.hn || '-'}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 font-extrabold text-[9px] block">อายุ</span>
+                              <span className="text-slate-900 block truncate font-black">{petAge}</span>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-1 text-[11px] mt-1 border-b border-dashed border-slate-200 pb-1.5">
+                            <div className="truncate">
+                              <span className="text-slate-500 font-extrabold text-[9px]">ชื่อเจ้าของ: </span>
+                              <span className="text-slate-705 font-bold truncate block">{selectedPatient?.ownerName || '-'}</span>
+                            </div>
+                            <div className="text-center">
+                              <span className="text-slate-500 font-extrabold text-[9px]">วันที่: </span>
+                              <span className="text-slate-705 font-bold block">{thaiDateStr}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-slate-500 font-extrabold text-[9px]">เวลา: </span>
+                              <span className="text-slate-705 font-bold block">{timeStr}</span>
+                            </div>
+                          </div>
+
+                          <div className="text-center font-black text-xs border-b-2 border-slate-800 py-1.5 mt-1.5 bg-slate-50 rounded-xl text-slate-950">
+                            ชื่อยา: {item.name} ({item.quantity || 1} {item.unit || 'เม็ด'})
+                          </div>
+
+                          <div className="text-center font-extrabold text-xs text-slate-800 mt-2">
+                            {item.usageMethod || 'กิน'}ครั้งละ <span className="font-black text-sm underline mx-0.5">{item.dosage || '1'}</span> {item.unit || 'เม็ด'} &nbsp;&nbsp;&nbsp;&nbsp; วันละ <span className="font-black text-sm underline mx-0.5">{freqCount}</span> ครั้ง
+                          </div>
+
+                          <div className="text-center font-black text-xs text-slate-800 mt-1">
+                            {timingMealText} {frequencySlotsText ? `เช้า - เย็น (${frequencySlotsText})` : ''}
+                          </div>
+
+                          <div className="text-center font-bold text-[10px] text-rose-500 mt-1.5 uppercase tracking-wide">
+                            {conditionWarnings.join(' • ')}
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="flex items-center border-t border-slate-300 pt-1.5 mt-auto">
+                      {item.category === 'Eye' ? (
+                        <div className="bg-sky-50 border border-sky-300 rounded px-1.5 py-0.5 font-black text-[7px] text-sky-600 mr-2 uppercase">
+                          Eye Drop
+                        </div>
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-slate-50 border border-slate-100 flex items-center justify-center mr-2 shrink-0 overflow-hidden p-0.5">
+                          {clinicLogo ? (
+                            <img src={clinicLogo} alt="Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                          ) : (
+                            <span className="text-slate-400 font-black text-[8px]">โลโก้</span>
+                          )}
+                        </div>
+                      )}
+                      <div className="text-[7.5px] leading-tight text-slate-500 flex-1 min-w-0">
+                        <div className="font-black text-slate-700 text-[8px] truncate">{clinicName}</div>
+                        <div className="truncate">{clinicAddress}</div>
+                        <div className="truncate">Tel: {clinicPhone}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-4">
+                <button 
+                  onClick={() => setPrintPreviewItem(null)}
+                  className="px-6 py-3 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-2xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 flex items-center gap-2 shadow-sm"
+                >
+                  ปิดหน้าต่างนี้ (Cancel)
+                </button>
+
+                <button 
+                  onClick={() => {
+                    executeRealPrint(item);
+                    setPrintPreviewItem(null);
+                  }}
+                  className="px-8 py-3 bg-slate-950 hover:bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 flex items-center gap-2 shadow-lg shadow-slate-200"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>พิมพ์ฉลาก (Print Now)</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
