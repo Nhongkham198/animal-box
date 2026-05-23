@@ -22,6 +22,7 @@ import {
   TrendingUp, 
   Clock, 
   CheckCircle2,
+  Check,
   PawPrint,
   ArrowUpRight,
   ArrowDownRight,
@@ -62,6 +63,41 @@ export default function Dashboard() {
   const { clinicName } = useClinic();
   const [isAddPatientModalOpen, setIsAddPatientModalOpen] = useState(false);
   const [isAddAppointmentModalOpen, setIsAddAppointmentModalOpen] = useState(false);
+  
+  const calculateAge = (birthDateStr?: string) => {
+    if (!birthDateStr) return '-';
+    try {
+      const birth = new Date(birthDateStr);
+      const now = new Date();
+      let year = now.getFullYear() - birth.getFullYear();
+      let month = now.getMonth() - birth.getMonth();
+      if (month < 0 || (month === 0 && now.getDate() < birth.getDate())) {
+        year--;
+        month += 12;
+      }
+      if (year > 0) {
+        return `${year} ปี ${month} เดือน`;
+      }
+      return `${month} เดือน`;
+    } catch (e) {
+      return '-';
+    }
+  };
+
+  const formatThaiDateString = (dateStr: string) => {
+    if (!dateStr) return '';
+    try {
+      const [y, m, d] = dateStr.split('-');
+      const monthsTh = [
+        'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+        'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
+      ];
+      const thaiYear = Number(y) + 543;
+      return `${Number(d)} ${monthsTh[Number(m) - 1]} ${thaiYear}`;
+    } catch (e) {
+      return dateStr;
+    }
+  };
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     totalPatients: 0,
@@ -83,6 +119,14 @@ export default function Dashboard() {
   const [outOfStockItems, setOutOfStockItems] = useState<any[]>([]);
   const [showStockModal, setShowStockModal] = useState(false);
   const [hasAlertedThisSession, setHasAlertedThisSession] = useState(false);
+  const [uniquePatientIds, setUniquePatientIds] = useState<string[]>([]);
+  const [showUniquePetsModal, setShowUniquePetsModal] = useState(false);
+  const [uniquePetsSearchQuery, setUniquePetsSearchQuery] = useState('');
+  const [isCustomDateActive, setIsCustomDateActive] = useState(false);
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+  const [customUniquePatientIds, setCustomUniquePatientIds] = useState<string[]>([]);
+  const [isCustomDateLoading, setIsCustomDateLoading] = useState(false);
 
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -108,8 +152,9 @@ export default function Dashboard() {
         const opds = trendOpdSnap.docs.map((doc: any) => doc.data());
         
         // Calculate Unique Patients
-        const uniqueIds = new Set(opds.filter((o: any) => o.patientId).map((o: any) => o.patientId));
-        setUniquePatientsCount(uniqueIds.size);
+        const uniqueIds = Array.from(new Set(opds.filter((o: any) => o.patientId).map((o: any) => o.patientId))) as string[];
+        setUniquePatientsCount(uniqueIds.length);
+        setUniquePatientIds(uniqueIds);
 
         // Calculate Vaccines (Placeholder keyword check)
         let vCount = 0;
@@ -164,6 +209,54 @@ export default function Dashboard() {
 
     fetchTrendsData();
   }, [selectedMonth, selectedYear, isAuthReady, user, isStaff, isAdmin]);
+
+  const fetchRangeUniquePets = async (startStr: string, endStr: string) => {
+    if (!startStr || !endStr) return;
+    setIsCustomDateLoading(true);
+    try {
+      const startParts = startStr.split('-');
+      const endParts = endStr.split('-');
+      
+      const start = new Date(Number(startParts[0]), Number(startParts[1]) - 1, Number(startParts[2]), 0, 0, 0, 0);
+      const end = new Date(Number(endParts[0]), Number(endParts[1]) - 1, Number(endParts[2]), 23, 59, 59, 999);
+      
+      const q = query(
+        collection(db, 'opd_records'),
+        where('dateVisit', '>=', start),
+        where('dateVisit', '<=', end)
+      );
+      
+      const snap = await getDocs(q);
+      const docs = snap.docs.map((d: any) => d.data());
+      
+      const uniqueIds = Array.from(new Set(docs.filter((o: any) => o.patientId).map((o: any) => o.patientId))) as string[];
+      setCustomUniquePatientIds(uniqueIds);
+      setIsCustomDateActive(true);
+    } catch (err) {
+      console.error("Failed to fetch custom date range unique pets:", err);
+    } finally {
+      setIsCustomDateLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (showUniquePetsModal) {
+      const start = new Date(selectedYear, selectedMonth, 1);
+      const end = new Date(selectedYear, selectedMonth + 1, 0);
+      
+      const formatLocal = (d: Date) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const r = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${r}`;
+      };
+      
+      setCustomStartDate(formatLocal(start));
+      setCustomEndDate(formatLocal(end));
+      setIsCustomDateActive(false);
+      setCustomUniquePatientIds([]);
+    }
+  }, [showUniquePetsModal, selectedMonth, selectedYear]);
 
   useEffect(() => {
     if (!isAuthReady || !user) return;
@@ -401,13 +494,29 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="bg-slate-50/50 rounded-2xl p-6 flex flex-col justify-center gap-6">
-              <div className="space-y-1">
+              <div 
+                onClick={() => {
+                  if (uniquePatientIds.length > 0) {
+                    setShowUniquePetsModal(true);
+                  }
+                }}
+                className={cn(
+                  "space-y-1 p-3 -m-3 rounded-2xl transition-all select-none group border border-transparent",
+                  uniquePatientIds.length > 0 
+                    ? "hover:bg-sky-50 cursor-pointer hover:border-sky-100 active:scale-[0.98]" 
+                    : ""
+                )}
+                title={uniquePatientIds.length > 0 ? "คลิกเพื่อดูรายชื่อสัตว์" : ""}
+              >
                 <div className="flex items-center gap-2 text-sky-500 mb-1">
                   <Users className="w-4 h-4" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Monthly Analysis</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-sky-600 transition-colors">Monthly Analysis</span>
+                  {uniquePatientIds.length > 0 && (
+                    <span className="text-[9px] bg-sky-100 text-sky-600 px-2 py-0.5 rounded-full font-black ml-auto leading-none uppercase tracking-tight">ดูรายชื่อ</span>
+                  )}
                 </div>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-black text-slate-900">{uniquePatientsCount}</span>
+                  <span className="text-3xl font-black text-slate-900 group-hover:text-sky-700 transition-colors">{uniquePatientsCount}</span>
                   <span className="text-xs font-bold text-slate-400 uppercase">Unique Pets</span>
                 </div>
                 <p className="text-[10px] text-slate-400 font-medium">Distinct pets treated in {format(new Date(selectedYear, selectedMonth, 1), 'MMMM')}</p>
@@ -696,6 +805,253 @@ export default function Dashboard() {
                     <ArrowUpRight className="w-4 h-4" />
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {showUniquePetsModal && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 text-left">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setShowUniquePetsModal(false);
+                setUniquePetsSearchQuery('');
+              }}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+            >
+              {/* Header */}
+              <div className="px-8 py-6 border-b border-sky-100 bg-gradient-to-r from-sky-50/50 to-indigo-50/10 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-sky-100 text-sky-600 rounded-2xl flex items-center justify-center shadow-inner">
+                    <Users className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900 tracking-tight">รายชื่อสัตว์เลี้ยง (Unique Pets)</h3>
+                    <p className="text-[11px] text-slate-405 font-bold uppercase tracking-wider">
+                      {isCustomDateActive ? (
+                        <span className="text-sky-600 font-extrabold flex items-center gap-1.5 normal-case">
+                          <span className="inline-block w-2.5 h-2.5 rounded-full bg-sky-500 animate-pulse" />
+                          ช่วงวันที่เลือก: {formatThaiDateString(customStartDate)} - {formatThaiDateString(customEndDate)}
+                        </span>
+                      ) : (
+                        `ประจำความเคลื่อนไหว ${['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'][selectedMonth]} ${selectedYear + 543} (${format(new Date(selectedYear, selectedMonth, 1), 'MMMM yyyy')})`
+                      )}
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => {
+                    setShowUniquePetsModal(false);
+                    setUniquePetsSearchQuery('');
+                  }}
+                  className="p-2.5 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-all font-black font-extrabold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Custom Date Range Filter HUD */}
+              <div className="px-8 py-4 bg-sky-50/30 border-b border-sky-100/60 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div 
+                    className="flex items-center gap-2.5 cursor-pointer select-none"
+                    onClick={() => {
+                      if (isCustomDateActive) {
+                        setIsCustomDateActive(false);
+                      } else {
+                        fetchRangeUniquePets(customStartDate, customEndDate);
+                      }
+                    }}
+                  >
+                    <div className={cn(
+                      "w-4 h-4 rounded border flex items-center justify-center transition-all",
+                      isCustomDateActive ? "border-sky-500 bg-sky-500" : "border-slate-300 bg-white"
+                    )}>
+                      {isCustomDateActive && <Check className="w-3 h-3 text-white" />}
+                    </div>
+                    <span className="text-xs font-black text-slate-700 uppercase tracking-wide">
+                      กำหนดช่วงวันที่เอง (Custom Date Range)
+                    </span>
+                  </div>
+
+                  {isCustomDateActive && (
+                    <button 
+                      onClick={() => {
+                        setIsCustomDateActive(false);
+                      }}
+                      className="text-[10px] bg-sky-100 hover:bg-sky-200 text-sky-700 px-2.5 py-1 rounded-lg font-black uppercase transition-all duration-200"
+                    >
+                      ย้อนกลับไปใช้รายเดือน
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-end gap-3 flex-wrap sm:flex-nowrap">
+                  <div className="flex-1 min-w-[130px]">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">วันที่เริ่มต้น</span>
+                    <input 
+                      type="date"
+                      value={customStartDate}
+                      onChange={(e) => setCustomStartDate(e.target.value)}
+                      className="w-full bg-white border border-slate-200 focus:border-sky-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 outline-none transition-all shadow-xs"
+                    />
+                  </div>
+
+                  <div className="flex-1 min-w-[130px]">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">วันที่สิ้นสุด</span>
+                    <input 
+                      type="date"
+                      value={customEndDate}
+                      onChange={(e) => setCustomEndDate(e.target.value)}
+                      className="w-full bg-white border border-slate-200 focus:border-sky-305 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 outline-none transition-all shadow-xs"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={isCustomDateLoading}
+                    onClick={() => fetchRangeUniquePets(customStartDate, customEndDate)}
+                    className="h-[38px] px-5 bg-sky-500 hover:bg-sky-600 active:scale-95 disabled:bg-sky-300 text-white rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-md shadow-sky-150 shrink-0"
+                  >
+                    {isCustomDateLoading ? (
+                      <>
+                        <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        <span>กำลังดึงข้อมูล...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>ดึงข้อมูล</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Subheader */}
+              <div className="p-6 bg-slate-50 border-b border-slate-100 flex flex-col sm:flex-row gap-4 items-center justify-between">
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">ทั้งหมด:</span>
+                  <span className="px-3 py-1 bg-sky-500 text-white rounded-full text-xs font-black shadow-sm">
+                    {(isCustomDateActive ? customUniquePatientIds : uniquePatientIds).length} รายการ
+                  </span>
+                </div>
+                
+                <div className="relative w-full sm:w-64">
+                  <input
+                    type="text"
+                    placeholder="ค้นหาตาม ชื่อ/HN/เจ้าของ..."
+                    value={uniquePetsSearchQuery}
+                    onChange={(e) => setUniquePetsSearchQuery(e.target.value)}
+                    className="w-full pl-4 pr-10 py-2.5 bg-white border border-slate-200 focus:border-sky-305 rounded-xl outline-none transition-all placeholder-slate-400 text-xs font-bold text-slate-700 shadow-xs"
+                  />
+                  {uniquePetsSearchQuery ? (
+                    <button 
+                      onClick={() => setUniquePetsSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-black"
+                    >
+                      ยกเลิก
+                    </button>
+                  ) : (
+                    <Users className="w-3.5 h-3.5 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  )}
+                </div>
+              </div>
+
+              {/* Patient List */}
+              <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-3 bg-slate-50/30">
+                {(() => {
+                  const queryLower = uniquePetsSearchQuery.trim().toLowerCase();
+                  const targetList = isCustomDateActive ? customUniquePatientIds : uniquePatientIds;
+                  const filteredPatients = targetList
+                    .map(id => patientsMap[id])
+                    .filter(Boolean)
+                    .filter(patient => {
+                      if (!queryLower) return true;
+                      const nameMatch = (patient.name || '').toLowerCase().includes(queryLower);
+                      const hnMatch = (patient.hn || '').toLowerCase().includes(queryLower);
+                      const ownerMatch = (patient.ownerName || '').toLowerCase().includes(queryLower);
+                      const breedMatch = (patient.breed || '').toLowerCase().includes(queryLower);
+                      return nameMatch || hnMatch || ownerMatch || breedMatch;
+                    });
+
+                  if (filteredPatients.length === 0) {
+                    return (
+                      <div className="py-16 text-center bg-white rounded-3xl border border-dashed border-slate-200 p-6">
+                        <PawPrint className="w-12 h-12 text-slate-300 mx-auto mb-3 animate-pulse" />
+                        <h4 className="text-sm font-black text-slate-700 mb-1">ไม่พบข้อมูลสัตว์เลี้ยง</h4>
+                        <p className="text-xs text-slate-400">ระบุชื่อ, HN, หรือผู้ปกครองเพื่อค้นหาใหม่อีกครั้ง</p>
+                      </div>
+                    );
+                  }
+
+                  return filteredPatients.map((patient, index) => {
+                    const petAge = patient.birthDate ? calculateAge(patient.birthDate) : '-';
+                    return (
+                      <div 
+                        key={`unique-pet-row-${patient.id}-${index}`}
+                        className="p-5 bg-white rounded-2xl border border-slate-100 hover:border-sky-200 hover:shadow-md transition-all duration-200 flex items-center justify-between gap-4 group"
+                      >
+                        <div className="flex items-start gap-4 min-w-0">
+                          <div className="w-11 h-11 bg-slate-50 rounded-xl flex items-center justify-center shrink-0 border border-slate-100 group-hover:bg-sky-50 group-hover:border-sky-100 transition-colors">
+                            {patient.gender === 'Male' ? (
+                              <span className="text-blue-500 font-extrabold text-sm font-sans">♂</span>
+                            ) : patient.gender === 'Female' ? (
+                              <span className="text-rose-500 font-extrabold text-sm font-sans">♀</span>
+                            ) : (
+                              <PawPrint className="w-5 h-5 text-slate-450" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                              <span className="font-extrabold text-sm text-slate-800 truncate group-hover:text-sky-705 transition-colors leading-none">{patient.name || '-'}</span>
+                              <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-md text-[9px] font-black font-mono leading-none tracking-tight">HN: {patient.hn || '-'}</span>
+                            </div>
+                            
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1.5 text-[11px] text-slate-400 font-bold">
+                              <span>สายพันธุ์: <strong className="text-slate-600">{patient.breed || '-'}</strong></span>
+                              <span className="text-slate-300">•</span>
+                              <span>อายุ: <strong className="text-slate-600">{petAge}</strong></span>
+                              <span className="text-slate-300">•</span>
+                              <span>เพศ: <strong className="text-slate-600">{patient.gender === 'Male' ? 'ผู้' : patient.gender === 'Female' ? 'เมีย' : patient.gender || 'ไม่ระบุ'}</strong></span>
+                            </div>
+                            
+                            <div className="mt-1 text-[11px] text-slate-400">
+                              เจ้าของ: <span className="text-slate-600 font-bold">{patient.ownerName || '-'}</span> {patient.ownerPhone && <span className="text-[10px] text-slate-400">({patient.ownerPhone})</span>}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <span className="px-2.5 py-1 bg-sky-50 text-sky-600 border border-sky-100 rounded-lg text-[9px] font-black uppercase tracking-tight">
+                            วิเคราะห์รายเดือน
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+
+              {/* Footer */}
+              <div className="p-6 bg-slate-50 border-t border-slate-100 flex justify-end">
+                <button 
+                  onClick={() => {
+                    setShowUniquePetsModal(false);
+                    setUniquePetsSearchQuery('');
+                  }}
+                  className="px-6 py-3 bg-slate-900 hover:bg-black text-white rounded-xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 shadow-md shadow-slate-200"
+                >
+                  ปิดหน้าต่าง (Close)
+                </button>
               </div>
             </motion.div>
           </div>

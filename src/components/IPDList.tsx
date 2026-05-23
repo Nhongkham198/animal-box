@@ -77,6 +77,17 @@ interface IPDRecord {
   vaccineName?: string;
   isMedication?: boolean;
   medicationDetails?: string;
+  medicationWoundCare?: boolean;
+  medicationWoundCareFrequency?: string;
+  medicationWoundCareSize?: 'Small' | 'Large' | '';
+  medicationFeedMeds?: boolean;
+  medicationFeedMedsTime?: string[];
+  medicationFeedMedsDetails?: string;
+  medicationGiveIv?: boolean;
+  medicationGiveIvType?: string;
+  medicationGiveIvVolume?: string;
+  medicationFeedFood?: boolean;
+  medicationFeedFoodDetails?: string;
   dischargeDate?: string;
 }
 
@@ -115,11 +126,52 @@ export default function IPDList() {
     vaccinationPhoto: '',
     isMedication: false,
     medicationDetails: '',
+    medicationWoundCare: false,
+    medicationWoundCareFrequency: '',
+    medicationWoundCareSize: '' as 'Small' | 'Large' | '',
+    medicationFeedMeds: false,
+    medicationFeedMedsTime: [] as string[],
+    medicationFeedMedsDetails: '',
+    medicationGiveIv: false,
+    medicationGiveIvType: '',
+    medicationGiveIvVolume: '',
+    medicationFeedFood: false,
+    medicationFeedFoodDetails: '',
     dischargeDate: '',
     serviceCharge: 0
   });
 
+  const [roomPrices, setRoomPrices] = useState<{ Small: string; Large: string; Cage: string }>({
+    Small: '',
+    Large: '',
+    Cage: ''
+  });
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    const fetchRoomPrices = async () => {
+      try {
+        const docRef = doc(db, 'settings', 'usage_settings');
+        const snap = await getDoc(docRef);
+        if (snap.exists() && active) {
+          const data = snap.data();
+          setRoomPrices({
+            Small: data.roomPriceSmall !== undefined && data.roomPriceSmall !== '' ? `${data.roomPriceSmall} ฿/วัน` : '',
+            Large: data.roomPriceLarge !== undefined && data.roomPriceLarge !== '' ? `${data.roomPriceLarge} ฿/วัน` : '',
+            Cage: data.roomPriceCage !== undefined && data.roomPriceCage !== '' ? `${data.roomPriceCage} ฿/วัน` : ''
+          });
+        }
+      } catch (err) {
+        console.warn("Failed to retrieve room prices settings:", err);
+      }
+    };
+    fetchRoomPrices();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -276,8 +328,27 @@ export default function IPDList() {
     if (!newRecord.patientId || !newRecord.cageNumber) return;
 
     try {
+      let finalDetails = newRecord.medicationDetails;
+      if (newRecord.isMedication) {
+        const parts = [];
+        if (newRecord.medicationFeedMeds) {
+          parts.push(`ป้อนยา: [ช่วงเวลา: ${newRecord.medicationFeedMedsTime?.join(', ') || 'N/A'}] ${newRecord.medicationFeedMedsDetails || ''}`);
+        }
+        if (newRecord.medicationWoundCare) {
+          parts.push(`ทำแผล: ${newRecord.medicationWoundCareFrequency || '1'} ครั้ง/วัน [ขนาดแผล: ${newRecord.medicationWoundCareSize === 'Small' ? 'เล็ก' : newRecord.medicationWoundCareSize === 'Large' ? 'ใหญ่' : 'N/A'}]`);
+        }
+        if (newRecord.medicationGiveIv) {
+          parts.push(`ให้น้ำเกลือ: [ชนิด: ${newRecord.medicationGiveIvType || 'N/A'}, ปริมาณ: ${newRecord.medicationGiveIvVolume || 'N/A'}]`);
+        }
+        if (newRecord.medicationFeedFood) {
+          parts.push(`ป้อนข้าว: ${newRecord.medicationFeedFoodDetails || ''}`);
+        }
+        finalDetails = parts.join(' | ') || 'ฝากให้ยา';
+      }
+
       await addDoc(collection(db, 'ipd_records'), {
         ...newRecord,
+        medicationDetails: finalDetails,
         dateAdmit: serverTimestamp(),
         billingStatus: 'unpaid',
         dailyNotes: []
@@ -306,6 +377,17 @@ export default function IPDList() {
         vaccinationPhoto: '',
         isMedication: false,
         medicationDetails: '',
+        medicationWoundCare: false,
+        medicationWoundCareFrequency: '',
+        medicationWoundCareSize: '',
+        medicationFeedMeds: false,
+        medicationFeedMedsTime: [],
+        medicationFeedMedsDetails: '',
+        medicationGiveIv: false,
+        medicationGiveIvType: '',
+        medicationGiveIvVolume: '',
+        medicationFeedFood: false,
+        medicationFeedFoodDetails: '',
         dischargeDate: '',
         serviceCharge: 0
       });
@@ -499,6 +581,35 @@ export default function IPDList() {
                                 <span className="px-2 py-1 bg-teal-100 text-teal-700 rounded-lg text-[9px] font-black uppercase border border-teal-250 flex items-center gap-1.5 animate-pulse">
                                   <Check className="w-2.5 h-2.5 text-teal-600" />
                                   อาบน้ำก่อนกลับ (฿{record.boardingBathingPrice || '0'})
+                                </span>
+                              )}
+                            </>
+                          )}
+
+                          {record.isMedication && (
+                            <>
+                              {record.medicationFeedMeds && (
+                                <span className="px-2 py-1 bg-amber-50 text-amber-700 rounded-lg text-[9px] font-black uppercase border border-amber-100 flex items-center gap-1.5">
+                                  <div className="w-1 h-1 rounded-full bg-amber-500 animate-pulse" />
+                                  ป้อนยา: {record.medicationFeedMedsTime?.join(', ') || 'N/A'}
+                                </span>
+                              )}
+                              {record.medicationWoundCare && (
+                                <span className="px-2 py-1 bg-amber-100 text-amber-800 rounded-lg text-[9px] font-black uppercase border border-amber-200 flex items-center gap-1.5">
+                                  <div className="w-1 h-1 rounded-full bg-amber-600" />
+                                  ทำแผล {record.medicationWoundCareSize === 'Small' ? 'เล็ก' : record.medicationWoundCareSize === 'Large' ? 'ใหญ่' : 'N/A'} ({record.medicationWoundCareFrequency || '1'} ครั้ง/วัน)
+                                </span>
+                              )}
+                              {record.medicationGiveIv && (
+                                <span className="px-2 py-1 bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm flex items-center gap-1.5">
+                                  <div className="w-1 h-1 rounded-full bg-white" />
+                                  น้ำเกลือ: {record.medicationGiveIvType || 'N/A'} {record.medicationGiveIvVolume ? `(${record.medicationGiveIvVolume})` : ''}
+                                </span>
+                              )}
+                              {record.medicationFeedFood && (
+                                <span className="px-2 py-1 bg-amber-200 text-amber-950 rounded-lg text-[9px] font-black uppercase border border-amber-300 flex items-center gap-1.5">
+                                  <div className="w-1 h-1 rounded-full bg-amber-800" />
+                                  ป้อนข้าว
                                 </span>
                               )}
                             </>
@@ -953,14 +1064,31 @@ export default function IPDList() {
                                       type="button"
                                       onClick={() => setNewRecord({ ...newRecord, boardingRoomSize: room.value })}
                                       className={cn(
-                                        "px-4 py-3 rounded-2xl text-xs font-bold transition-all border-2 flex items-center justify-center gap-1.5",
+                                        "px-4 py-3.5 rounded-2xl text-xs font-bold transition-all border-2 flex flex-col items-center justify-center gap-1 min-h-[70px]",
                                         newRecord.boardingRoomSize === room.value
                                           ? "bg-sky-500 border-sky-500 text-white shadow-lg shadow-sky-200"
                                           : "bg-white border-slate-100 text-slate-500 hover:border-sky-200"
                                       )}
                                     >
-                                      {newRecord.boardingRoomSize === room.value && <Check className="w-3.5 h-3.5" />}
-                                      {room.label}
+                                      <div className="flex items-center gap-1.5">
+                                        {newRecord.boardingRoomSize === room.value && <Check className="w-3.5 h-3.5" />}
+                                        <span className="font-extrabold">{room.label}</span>
+                                      </div>
+                                      {roomPrices[room.value as 'Small' | 'Large' | 'Cage'] ? (
+                                        <span className={cn(
+                                          "text-[10px] font-mono",
+                                          newRecord.boardingRoomSize === room.value ? "text-sky-100 font-extrabold" : "text-slate-400 font-bold"
+                                        )}>
+                                          {roomPrices[room.value as 'Small' | 'Large' | 'Cage']}
+                                        </span>
+                                      ) : (
+                                        <span className={cn(
+                                          "text-[9px]",
+                                          newRecord.boardingRoomSize === room.value ? "text-sky-200" : "text-slate-350"
+                                        )}>
+                                          ไม่ได้ระบุราคา
+                                        </span>
+                                      )}
                                     </button>
                                   ))}
                                 </div>
@@ -1099,15 +1227,206 @@ export default function IPDList() {
                           </div>
                         )}
                         {newRecord.isMedication && (
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-amber-600 uppercase tracking-widest ml-1">รายละเอียดการให้ยา ( Medication Instructions )</label>
-                            <textarea
-                              rows={2}
-                              value={newRecord.medicationDetails}
-                              onChange={(e) => setNewRecord({...newRecord, medicationDetails: e.target.value})}
-                              placeholder="ชื่อยาลำดับที่ 1: เม็ด/ครั้ง, เวลา..."
-                              className="w-full px-5 py-4 bg-amber-50/30 border-2 border-amber-100 focus:border-amber-500 rounded-2xl transition-all outline-none font-medium text-slate-700 resize-none text-xs"
-                            />
+                          <div className="space-y-4">
+                            <label className="text-[10px] font-black text-amber-600 uppercase tracking-widest ml-1">รายละเอียดการฝากให้ยา ( Medication Services )</label>
+                            
+                            <div className="grid gap-3">
+                              {/* Option 2: ป้อนยา */}
+                              <div className={cn(
+                                "p-4 rounded-2xl border border-dashed hover:border-amber-300 transition-all cursor-pointer",
+                                newRecord.medicationFeedMeds ? "border-amber-500 bg-amber-50/40 border-solid" : "border-slate-200 bg-white"
+                              )} onClick={() => setNewRecord({...newRecord, medicationFeedMeds: !newRecord.medicationFeedMeds})}>
+                                <div className="flex items-center gap-3">
+                                  <div className={cn(
+                                    "w-5 h-5 rounded border-2 flex items-center justify-center transition-all",
+                                    newRecord.medicationFeedMeds ? "border-amber-500 bg-amber-500" : "border-slate-200"
+                                  )}>
+                                    {newRecord.medicationFeedMeds && <Check className="w-3.5 h-3.5 text-white" />}
+                                  </div>
+                                  <span className={cn("text-xs font-black", newRecord.medicationFeedMeds ? "text-amber-800" : "text-slate-600")}>ป้อนยา</span>
+                                </div>
+                                
+                                {newRecord.medicationFeedMeds && (
+                                  <div className="mt-4 ml-8 space-y-4 animate-in fade-in slide-in-from-top-1 duration-300" onClick={(e) => e.stopPropagation()}>
+                                    <div>
+                                      <label className="text-[10px] font-black text-amber-600 uppercase tracking-widest block mb-2">ช่วงเวลาการป้อนยา (เช้า / กลางวัน / เย็น)</label>
+                                      <div className="flex gap-2">
+                                        {['เช้า', 'กลางวัน', 'เย็น'].map(time => {
+                                          const medicationFeedMedsTime = newRecord.medicationFeedMedsTime || [];
+                                          const exists = medicationFeedMedsTime.includes(time);
+                                          return (
+                                            <button
+                                              key={time}
+                                              type="button"
+                                              onClick={() => {
+                                                const next = exists 
+                                                  ? medicationFeedMedsTime.filter(t => t !== time)
+                                                  : [...medicationFeedMedsTime, time];
+                                                setNewRecord({ ...newRecord, medicationFeedMedsTime: next });
+                                              }}
+                                              className={cn(
+                                                "px-5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 border-2",
+                                                exists
+                                                  ? "bg-amber-500 border-amber-500 text-white shadow-lg shadow-amber-100"
+                                                  : "bg-white border-slate-100 text-slate-400 hover:border-amber-200"
+                                              )}
+                                            >
+                                              {exists && <Check className="w-3 h-3" />}
+                                              {time}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block">รายละเอียดสำหรับการป้อนยา</label>
+                                      <input
+                                        type="text"
+                                        placeholder="ระบุชื่อยาลำดับที่ 1: เม็ด/ครั้ง, เวลา, และรายละเอียด..."
+                                        value={newRecord.medicationFeedMedsDetails || ''}
+                                        onChange={(e) => setNewRecord({...newRecord, medicationFeedMedsDetails: e.target.value})}
+                                        className="w-full px-5 py-3.5 bg-amber-50/20 border-2 border-transparent focus:border-amber-400 focus:bg-white rounded-2xl transition-all outline-none font-bold text-slate-705 text-xs"
+                                      />
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Option 1: ทำแผล */}
+                              <div className={cn(
+                                "p-4 rounded-2xl border border-dashed hover:border-amber-300 transition-all cursor-pointer",
+                                newRecord.medicationWoundCare ? "border-amber-500 bg-amber-50/40 border-solid" : "border-slate-200 bg-white"
+                              )} onClick={() => setNewRecord({...newRecord, medicationWoundCare: !newRecord.medicationWoundCare})}>
+                                <div className="flex items-center gap-3">
+                                  <div className={cn(
+                                    "w-5 h-5 rounded border-2 flex items-center justify-center transition-all",
+                                    newRecord.medicationWoundCare ? "border-amber-500 bg-amber-500" : "border-slate-200"
+                                  )}>
+                                    {newRecord.medicationWoundCare && <Check className="w-3.5 h-3.5 text-white" />}
+                                  </div>
+                                  <span className={cn("text-xs font-black", newRecord.medicationWoundCare ? "text-amber-800" : "text-slate-600")}>ทำแผล</span>
+                                </div>
+                                
+                                {newRecord.medicationWoundCare && (
+                                  <div className="mt-4 ml-8 space-y-4 animate-in fade-in slide-in-from-top-1 duration-300" onClick={(e) => e.stopPropagation()}>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                      <div className="space-y-1.5">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block">จำนวนครั้งที่ทำแผลต่อวัน (ความถี่)</label>
+                                        <div className="relative">
+                                          <input
+                                            type="text"
+                                            placeholder="ระบุตัวเลข เช่น 1, 2, 3..."
+                                            value={newRecord.medicationWoundCareFrequency || ''}
+                                            onChange={(e) => setNewRecord({...newRecord, medicationWoundCareFrequency: e.target.value})}
+                                            className="w-full pl-5 pr-20 py-3.5 bg-amber-50/20 border-2 border-transparent focus:border-amber-400 focus:bg-white rounded-2xl transition-all outline-none font-bold text-slate-705 text-xs"
+                                          />
+                                          <span className="absolute right-5 top-1/2 -translate-y-1/2 font-black text-amber-500 text-xs">ครั้ง / วัน</span>
+                                        </div>
+                                      </div>
+
+                                      <div className="space-y-1.5">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block">ขนาดของแผล</label>
+                                        <div className="flex gap-2">
+                                          {[
+                                            { value: 'Small', label: 'แผลขนาดเล็ก' },
+                                            { value: 'Large', label: 'แผลขนาดใหญ่' }
+                                          ].map((size) => (
+                                            <button
+                                              key={size.value}
+                                              type="button"
+                                              onClick={() => setNewRecord({ ...newRecord, medicationWoundCareSize: size.value as 'Small' | 'Large' })}
+                                              className={cn(
+                                                "flex-1 py-3.5 rounded-xl text-xs font-bold transition-all border-2 flex items-center justify-center gap-1.5",
+                                                newRecord.medicationWoundCareSize === size.value
+                                                  ? "bg-amber-500 border-amber-500 text-white shadow-lg shadow-amber-100"
+                                                  : "bg-white border-slate-100 text-slate-500 hover:border-amber-250"
+                                              )}
+                                            >
+                                              {newRecord.medicationWoundCareSize === size.value && <Check className="w-3.5 h-3.5" />}
+                                              {size.label}
+                                            </button>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Option 3: ให้น้ำเกลือ */}
+                              <div className={cn(
+                                "p-4 rounded-2xl border border-dashed hover:border-amber-300 transition-all cursor-pointer",
+                                newRecord.medicationGiveIv ? "border-amber-500 bg-amber-50/40 border-solid" : "border-slate-200 bg-white"
+                              )} onClick={() => setNewRecord({...newRecord, medicationGiveIv: !newRecord.medicationGiveIv})}>
+                                <div className="flex items-center gap-3">
+                                  <div className={cn(
+                                    "w-5 h-5 rounded border-2 flex items-center justify-center transition-all",
+                                    newRecord.medicationGiveIv ? "border-amber-500 bg-amber-500" : "border-slate-200"
+                                  )}>
+                                    {newRecord.medicationGiveIv && <Check className="w-3.5 h-3.5 text-white" />}
+                                  </div>
+                                  <span className={cn("text-xs font-black", newRecord.medicationGiveIv ? "text-amber-800" : "text-slate-600")}>ให้น้ำเกลือ</span>
+                                </div>
+                                
+                                {newRecord.medicationGiveIv && (
+                                  <div className="mt-4 ml-8 space-y-4 animate-in fade-in slide-in-from-top-1 duration-300" onClick={(e) => e.stopPropagation()}>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                      <div className="space-y-1.5">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block">ชนิดของน้ำเกลือ</label>
+                                        <input
+                                          type="text"
+                                          placeholder="ระบุชนิดน้ำเกลือ เช่น Acetate, NaCl 0.9%..."
+                                          value={newRecord.medicationGiveIvType || ''}
+                                          onChange={(e) => setNewRecord({...newRecord, medicationGiveIvType: e.target.value})}
+                                          className="w-full px-5 py-3.5 bg-amber-50/20 border-2 border-transparent focus:border-amber-400 focus:bg-white rounded-2xl transition-all outline-none font-bold text-slate-705 text-xs"
+                                        />
+                                      </div>
+
+                                      <div className="space-y-1.5">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block">ปริมาณน้ำเกลือ</label>
+                                        <input
+                                          type="text"
+                                          placeholder="ระบุปริมาณ เช่น 100 ml, 50 ml/hr..."
+                                          value={newRecord.medicationGiveIvVolume || ''}
+                                          onChange={(e) => setNewRecord({...newRecord, medicationGiveIvVolume: e.target.value})}
+                                          className="w-full px-5 py-3.5 bg-amber-50/20 border-2 border-transparent focus:border-amber-400 focus:bg-white rounded-2xl transition-all outline-none font-bold text-slate-705 text-xs"
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Option 4: ป้อนข้าว */}
+                              <div className={cn(
+                                "p-4 rounded-2xl border border-dashed hover:border-amber-300 transition-all cursor-pointer",
+                                newRecord.medicationFeedFood ? "border-amber-500 bg-amber-50/40 border-solid" : "border-slate-200 bg-white"
+                              )} onClick={() => setNewRecord({...newRecord, medicationFeedFood: !newRecord.medicationFeedFood})}>
+                                <div className="flex items-center gap-3">
+                                  <div className={cn(
+                                    "w-5 h-5 rounded border-2 flex items-center justify-center transition-all",
+                                    newRecord.medicationFeedFood ? "border-amber-500 bg-amber-500" : "border-slate-200"
+                                  )}>
+                                    {newRecord.medicationFeedFood && <Check className="w-3.5 h-3.5 text-white" />}
+                                  </div>
+                                  <span className={cn("text-xs font-black", newRecord.medicationFeedFood ? "text-amber-800" : "text-slate-600")}>ป้อนข้าว</span>
+                                </div>
+                                
+                                {newRecord.medicationFeedFood && (
+                                  <div className="mt-4 ml-8 space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-300" onClick={(e) => e.stopPropagation()}>
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block">รายละเอียดการป้อนข้าว</label>
+                                    <input
+                                      type="text"
+                                      placeholder="ระบุชนิดอาหาร หรือ ปริมาณการป้อนในแต่ละมื้อ..."
+                                      value={newRecord.medicationFeedFoodDetails || ''}
+                                      onChange={(e) => setNewRecord({...newRecord, medicationFeedFoodDetails: e.target.value})}
+                                      className="w-full px-5 py-3.5 bg-amber-50/20 border-2 border-transparent focus:border-amber-400 focus:bg-white rounded-2xl transition-all outline-none font-bold text-slate-705 text-xs"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
                           </div>
                         )}
                       </motion.div>

@@ -94,7 +94,7 @@ export default function Sidebar({
         { id: 'settings-activities', label: 'Activities Setting' },
         { id: 'settings-reward', label: 'Reward Setting' },
         { id: 'settings-product', label: 'Product Setting' },
-        { id: 'settings-usage', label: 'ตั้งค่าการใช้งาน' },
+        { id: 'settings-usage', label: 'ตั้งค่าราคาห้องพักสัตว์เลี้ยง' },
         { id: 'settings-payment', label: 'Payment Method Setting' },
         { id: 'settings-printer', label: 'Printer Setting' },
       ]
