@@ -189,24 +189,62 @@ function AppContent() {
     );
   };
 
-  const constraintsRef = React.useRef(null);
   const [fabSide, setFabSide] = useState<'left' | 'right'>('right');
   const [fabVertical, setFabVertical] = useState<'top' | 'bottom'>('bottom');
+  const [fabCoords, setFabCoords] = useState({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const handleResize = () => {
+      const sidebarWidth = isSidebarOpen ? 288 : 80;
+      const maxNegativeX = - (window.innerWidth - sidebarWidth - 112);
+      const maxNegativeY = - (window.innerHeight - 208);
+
+      setFabCoords({
+        x: fabSide === 'left' ? maxNegativeX : 0,
+        y: fabVertical === 'top' ? maxNegativeY : 0
+      });
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [isSidebarOpen, fabSide, fabVertical]);
 
   const onDragEnd = (_: any, info: any) => {
-    // Horizontal side detection
-    if (info.point.x < window.innerWidth / 2) {
-      setFabSide('left');
+    const sidebarWidth = isSidebarOpen ? 288 : 80;
+    const maxNegativeX = - (window.innerWidth - sidebarWidth - 112);
+    const maxNegativeY = - (window.innerHeight - 208);
+
+    const pointerX = info.point.x;
+    const pointerY = info.point.y;
+
+    const mainContentCenter = sidebarWidth + (window.innerWidth - sidebarWidth) / 2;
+    const headerHeight = 96;
+    const mainContentCenterY = headerHeight + (window.innerHeight - headerHeight) / 2;
+
+    let targetX = 0;
+    let nextSide: 'left' | 'right' = 'right';
+    if (pointerX < mainContentCenter) {
+      targetX = maxNegativeX;
+      nextSide = 'left';
     } else {
-      setFabSide('right');
+      targetX = 0;
+      nextSide = 'right';
     }
 
-    // Vertical side detection
-    if (info.point.y < window.innerHeight / 2) {
-      setFabVertical('top');
+    let targetY = 0;
+    let nextVertical: 'top' | 'bottom' = 'bottom';
+    if (pointerY < mainContentCenterY) {
+      targetY = maxNegativeY;
+      nextVertical = 'top';
     } else {
-      setFabVertical('bottom');
+      targetY = 0;
+      nextVertical = 'bottom';
     }
+
+    setFabSide(nextSide);
+    setFabVertical(nextVertical);
+    setFabCoords({ x: targetX, y: targetY });
   };
 
   if (loading || !isAuthReady) {
@@ -380,7 +418,6 @@ function AppContent() {
 
   return (
     <ErrorBoundary>
-      <div ref={constraintsRef} className="fixed inset-0 pointer-events-none z-0" />
       <div className="min-h-screen bg-slate-50 flex overflow-hidden">
         <Sidebar 
           isOpen={isSidebarOpen}
@@ -469,23 +506,23 @@ function AppContent() {
         <motion.div 
           layout
           drag
-          dragConstraints={constraintsRef}
+          dragConstraints={{
+            left: - (window.innerWidth - (isSidebarOpen ? 288 : 80) - 112),
+            right: 0,
+            top: - (window.innerHeight - 208),
+            bottom: 0
+          }}
           dragMomentum={false}
           dragElastic={0}
           onDragEnd={onDragEnd}
-          animate={{ x: 0, y: 0 }}
+          animate={fabCoords}
           initial={false}
           transition={{ 
             type: 'spring', 
             damping: 30, 
             stiffness: 300
           }}
-          className={cn(
-            "fixed z-[10001] flex gap-4 group cursor-grab active:cursor-grabbing touch-none",
-            fabVertical === 'bottom' ? "bottom-8" : "top-24",
-            fabSide === 'right' ? "right-8 items-end" : "left-8 items-start",
-            fabVertical === 'bottom' ? "flex-col-reverse" : "flex-col"
-          )}
+          className="fixed z-[10001] w-14 h-14 right-8 bottom-8 group cursor-grab active:cursor-grabbing touch-none"
         >
           <button 
             className="w-14 h-14 bg-[#00b4d8] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group-hover:rotate-45"
@@ -494,9 +531,9 @@ function AppContent() {
           </button>
           
           <div className={cn(
-            "flex gap-3 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto transition-all duration-300",
-            fabVertical === 'bottom' ? "flex-col-reverse translate-y-10" : "flex-col -translate-y-10",
-            fabSide === 'right' ? "items-end" : "items-start"
+            "absolute flex gap-3 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto transition-all duration-300 z-[10002]",
+            fabVertical === 'bottom' ? "bottom-16 flex-col-reverse translate-y-10" : "top-16 flex-col -translate-y-10",
+            fabSide === 'right' ? "right-0 items-end" : "left-0 items-start"
           )}>
             {[
               { id: 'dashboard', label: 'Home', icon: LayoutDashboard, color: 'bg-blue-50 text-[#00b4d8]' },

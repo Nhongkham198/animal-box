@@ -28,7 +28,11 @@ import {
   ArrowDownRight,
   Plus,
   CreditCard,
-  Package
+  Package,
+  X,
+  Stethoscope,
+  Syringe,
+  History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -127,6 +131,60 @@ export default function Dashboard() {
   const [customEndDate, setCustomEndDate] = useState('');
   const [customUniquePatientIds, setCustomUniquePatientIds] = useState<string[]>([]);
   const [isCustomDateLoading, setIsCustomDateLoading] = useState(false);
+
+  const [selectedTimelinePatient, setSelectedTimelinePatient] = useState<any | null>(null);
+  const [patientTimelineData, setPatientTimelineData] = useState<any[]>([]);
+  const [isPatientTimelineLoading, setIsPatientTimelineLoading] = useState(false);
+
+  const fetchPatientTimeline = async (patientId: string) => {
+    setIsPatientTimelineLoading(true);
+    setPatientTimelineData([]);
+    try {
+      const opdQ = query(collection(db, 'opd_records'), where('patientId', '==', patientId), orderBy('dateVisit', 'desc'));
+      const ipdQ = query(collection(db, 'ipd_records'), where('patientId', '==', patientId), orderBy('dateAdmit', 'desc'));
+      
+      const [opdSnap, ipdSnap] = await Promise.all([
+        getDocs(opdQ).catch(e => { console.warn("OPD fetch failed", e); return { docs: [] } as any; }),
+        getDocs(ipdQ).catch(e => { console.warn("IPD fetch failed", e); return { docs: [] } as any; })
+      ]);
+      
+      const opdItems = (opdSnap?.docs || []).map((doc: any) => ({ 
+        id: doc.id, 
+        type: 'OPD', 
+        date: doc.data().dateVisit, 
+        title: doc.data().category || 'OPD Treatment',
+        description: doc.data().finalDiagnosis || doc.data().symptoms,
+        items: doc.data().items || []
+      }));
+      
+      const ipdItems = (ipdSnap?.docs || []).map((doc: any) => ({ 
+        id: doc.id, 
+        type: 'IPD', 
+        date: doc.data().dateAdmit, 
+        title: 'IPD Admit (รับแอดมิท)',
+        description: doc.data().diagnosis,
+        status: doc.data().status
+      }));
+
+      const combined = [...opdItems, ...ipdItems].sort((a, b) => {
+        const dateA = a.date?.toDate ? a.date.toDate().getTime() : 0;
+        const dateB = b.date?.toDate ? b.date.toDate().getTime() : 0;
+        return dateB - dateA;
+      });
+
+      setPatientTimelineData(combined);
+    } catch (err) {
+      console.warn("Timeline fetch error:", err);
+    } finally {
+      setIsPatientTimelineLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedTimelinePatient) {
+      fetchPatientTimeline(selectedTimelinePatient.id);
+    }
+  }, [selectedTimelinePatient]);
 
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -1012,7 +1070,14 @@ export default function Dashboard() {
                           </div>
                           <div className="min-w-0">
                             <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-                              <span className="font-extrabold text-sm text-slate-800 truncate group-hover:text-sky-705 transition-colors leading-none">{patient.name || '-'}</span>
+                              <span 
+                                onClick={() => setSelectedTimelinePatient(patient)} 
+                                className="font-extrabold text-sm text-slate-800 hover:text-sky-600 hover:underline cursor-pointer transition-colors leading-none inline-flex items-center gap-1.5"
+                                title="คลิกเพื่อดูประวัติการรักษา (Timeline)"
+                              >
+                                {patient.name || '-'}
+                                <History className="w-3.5 h-3.5 text-slate-400 group-hover:text-sky-500 transition-colors" />
+                              </span>
                               <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-md text-[9px] font-black font-mono leading-none tracking-tight">HN: {patient.hn || '-'}</span>
                             </div>
                             
@@ -1049,6 +1114,178 @@ export default function Dashboard() {
                     setUniquePetsSearchQuery('');
                   }}
                   className="px-6 py-3 bg-slate-900 hover:bg-black text-white rounded-xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 shadow-md shadow-slate-200"
+                >
+                  ปิดหน้าต่าง (Close)
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Patient History Timeline Sub-Modal */}
+      <AnimatePresence>
+        {selectedTimelinePatient && (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+            {/* Backdrop with blur styling */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedTimelinePatient(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+
+            {/* Modal Body */}
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white w-full max-w-2xl h-[85vh] rounded-3xl shadow-2xl border border-slate-100 flex flex-col overflow-hidden relative z-10"
+            >
+              {/* Header */}
+              <div className="p-6 md:p-8 bg-white border-b border-slate-100 flex items-center justify-between gap-4 shrink-0">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 bg-sky-50 rounded-2xl flex items-center justify-center text-sky-500 shadow-sm border border-sky-100 shrink-0">
+                    <History className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-extrabold text-lg text-slate-800 leading-none">
+                        {selectedTimelinePatient.name || '-'}
+                      </h3>
+                      <span className="px-2.5 py-0.5 bg-slate-100 text-slate-550 rounded-md text-[9px] font-black font-mono tracking-tight leading-none">
+                        HN: {selectedTimelinePatient.hn || '-'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-bold text-slate-400 mt-1 uppercase tracking-wider">
+                      ประวัติการรักษาแบบ Timeline (Treatment Timeline)
+                    </p>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={() => setSelectedTimelinePatient(null)}
+                  className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-full transition-colors outline-none shrink-0"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Patient Quick Stats Card */}
+              <div className="mx-6 md:mx-8 mt-5 p-4 bg-slate-50 border border-slate-100 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-4 shrink-0">
+                <div>
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">สายพันธุ์ / พันธุ์</span>
+                  <span className="text-xs font-black text-slate-700 block truncate">{selectedTimelinePatient.breed || '-'}</span>
+                </div>
+                <div>
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">อายุ</span>
+                  <span className="text-xs font-black text-slate-700 block truncate">{selectedTimelinePatient.birthDate ? calculateAge(selectedTimelinePatient.birthDate) : '-'}</span>
+                </div>
+                <div>
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">เพศ</span>
+                  <span className="text-xs font-black text-slate-700 block truncate">
+                    {selectedTimelinePatient.gender === 'Male' ? 'ผู้ (♂)' : selectedTimelinePatient.gender === 'Female' ? 'เมีย (♀)' : selectedTimelinePatient.gender || 'ไม่ระบุ'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">เจ้าของ</span>
+                  <span className="text-xs font-black text-slate-700 block truncate">
+                    {selectedTimelinePatient.ownerName || '-'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Timeline Container */}
+              <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
+                {isPatientTimelineLoading ? (
+                  <div className="flex flex-col items-center justify-center py-20 gap-3">
+                    <div className="w-8 h-8 border-3 border-sky-200 border-t-sky-500 rounded-full animate-spin" />
+                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest">กำลังดึงข้อมูลประวัติ...</p>
+                  </div>
+                ) : patientTimelineData.length > 0 ? (
+                  <div className="space-y-8 relative before:absolute before:left-[19px] before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-100">
+                    {patientTimelineData.map((item, i) => {
+                      const isOPD = item.type === 'OPD';
+                      const formattedDate = item.date?.toDate 
+                        ? format(item.date.toDate(), 'dd MMM yyyy HH:mm') 
+                        : 'N/A';
+
+                      return (
+                        <div key={`timeline-item-${item.id}-${i}`} className="relative pl-12">
+                          {/* Dot / Icon container */}
+                          <div className={cn(
+                            "absolute left-0 top-0.5 w-10 h-10 rounded-xl flex items-center justify-center z-10 shadow-xs border border-white transition-all",
+                            isOPD ? "bg-sky-50 text-sky-500 border-sky-100" : "bg-amber-50 text-amber-500 border-amber-100"
+                          )}>
+                            {isOPD ? (
+                              <Stethoscope className="w-5 h-5" />
+                            ) : (
+                              <PawPrint className="w-5 h-5" />
+                            )}
+                          </div>
+
+                          {/* Card Content */}
+                          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-xs space-y-2.5 hover:border-slate-200 hover:shadow-md transition-all duration-200">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span className={cn(
+                                "px-2 py-0.5 rounded-md text-[9px] font-black tracking-widest uppercase",
+                                isOPD ? "bg-sky-50 text-sky-600" : "bg-amber-50 text-amber-600"
+                              )}>
+                                {isOPD ? 'ตรวจรักษา (OPD)' : 'แอดมิท (IPD)'}
+                              </span>
+                              <span className="text-[10px] font-bold text-slate-405 font-mono">
+                                {formattedDate}
+                              </span>
+                            </div>
+
+                            <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">
+                              {item.title}
+                            </h4>
+                            
+                            {item.description ? (
+                              <p className="text-xs text-slate-500 font-medium leading-relaxed bg-slate-50/50 p-3 rounded-xl border border-slate-100/50">
+                                {item.description}
+                              </p>
+                            ) : (
+                              <p className="text-xs text-slate-450 italic">ไม่มีข้อมูลแสดงรายละเอียดการรักษา</p>
+                            )}
+
+                            {/* Medications / Items prescribed */}
+                            {item.items && item.items.length > 0 && (
+                              <div className="pt-2.5 border-t border-slate-50 flex flex-wrap gap-1.5">
+                                {item.items.map((it: any, idx: number) => (
+                                  <span 
+                                    key={`timeline-item-unit-${idx}`} 
+                                    className="px-2 py-1 bg-slate-50 text-slate-600 text-[10px] font-bold rounded-lg border border-slate-100 inline-flex items-center gap-1 shadow-2xs"
+                                  >
+                                    <Package className="w-3 h-3 text-slate-400" />
+                                    {it.name} <span className="text-slate-400 font-bold">x{it.quantity}</span>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="py-16 text-center bg-white rounded-3xl border border-dashed border-slate-200 p-6 flex flex-col items-center justify-center">
+                    <History className="w-12 h-12 text-slate-350 mx-auto mb-3 animate-pulse" />
+                    <h4 className="text-sm font-black text-slate-705 mb-1 text-center">ไม่พบประวัติการรักษา</h4>
+                    <p className="text-xs text-slate-400 text-center max-w-sm leading-relaxed">
+                      สัตว์เลี้ยงตัวนี้ยังไม่มีบันทึกการรักษาในระบบ OPD หรือ IPD ในปัจจุบัน
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="p-6 bg-slate-50 border-t border-slate-100 flex justify-end gap-3 shrink-0">
+                <button 
+                  onClick={() => setSelectedTimelinePatient(null)}
+                  className="px-5 py-2.5 bg-slate-900 hover:bg-black text-white rounded-xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 shadow-md shadow-slate-200"
                 >
                   ปิดหน้าต่าง (Close)
                 </button>
