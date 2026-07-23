@@ -91,8 +91,8 @@ export default function RewardSetting() {
                   </td>
                 </tr>
               ) : (
-                rewards.map((reward) => (
-                  <tr key={reward.id} className="hover:bg-slate-50/50 transition-colors">
+                rewards.map((reward, index) => (
+                  <tr key={`reward-${reward.id || 'r'}-${index}`} className="hover:bg-slate-50/50 transition-colors">
                     <td className="px-6 py-4 text-center font-bold text-slate-700">{reward.name}</td>
                     <td className="px-6 py-4 text-center font-black text-slate-900">{reward.points}</td>
                     <td className="px-6 py-4 text-center text-slate-500">{reward.detail || '-'}</td>

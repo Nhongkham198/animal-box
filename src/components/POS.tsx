@@ -291,9 +291,9 @@ export default function POS() {
                 formatPhoneNumber(p.ownerPhone).includes(searchQuery) || 
                 p.ownerPhone?.includes(searchQuery) ||
                 p.name?.toLowerCase().includes(searchQuery.toLowerCase())
-              ).slice(0, 4).map(p => (
+              ).slice(0, 4).map((p, idx) => (
                 <button 
-                  key={p.id}
+                  key={`pos-patient-${p.id || 'id'}-${idx}`}
                   onClick={() => handleSelectOwner(p.ownerPhone)}
                   className="flex items-center gap-4 p-4 rounded-2xl border border-slate-100 hover:border-[#00b4d8] hover:bg-cyan-50 transition-all text-left"
                 >
@@ -383,7 +383,7 @@ export default function POS() {
 
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
             {cart.map((item, idx) => (
-              <div key={item.id || `cart-${item.name}-${idx}`} className="flex items-center justify-between group bg-slate-50/50 p-3 rounded-2xl border border-transparent hover:border-slate-100 hover:bg-white transition-all">
+              <div key={`pos-cart-item-${item.id || 'noid'}-${item.name}-${idx}`} className="flex items-center justify-between group bg-slate-50/50 p-3 rounded-2xl border border-transparent hover:border-slate-100 hover:bg-white transition-all">
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-bold text-slate-800">{item.name}</p>

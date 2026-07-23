@@ -11,7 +11,11 @@ import {
   Camera,
   X,
   FileImage,
-  ArrowLeft
+  ArrowLeft,
+  Syringe,
+  Stethoscope,
+  Scissors,
+  Droplets
 } from 'lucide-react';
 import { 
   db, 
@@ -44,7 +48,8 @@ export default function CustomerBookingForm({ onSuccess, onBack }: CustomerBooki
     petName: '',
     petSpecies: 'Dog',
     requestedDate: format(new Date(), 'yyyy-MM-dd'),
-    notes: ''
+    notes: '',
+    serviceType: 'check-up'
   });
 
   const [vaccineImage, setVaccineImage] = useState<File | null>(null);
@@ -130,7 +135,8 @@ export default function CustomerBookingForm({ onSuccess, onBack }: CustomerBooki
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!vaccineImage) {
+    const isBathing = formData.serviceType === 'bathing';
+    if (!vaccineImage && !isBathing) {
       setError("กรุณาแนบรูปภาพสมุดวัคซีนเพื่อดำเนินการต่อ");
       return;
     }
@@ -139,16 +145,18 @@ export default function CustomerBookingForm({ onSuccess, onBack }: CustomerBooki
     setError(null);
 
     try {
-      // 1. Upload Image to Firebase Storage
-      const storageRef = ref(storage, `vaccine_books/${Date.now()}_${vaccineImage.name}`);
-      const snapshot = await uploadBytes(storageRef, vaccineImage);
-      const downloadUrl = await getDownloadURL(snapshot.ref);
+      // 1. Upload Image to Firebase Storage if present
+      let downloadUrl = '';
+      if (vaccineImage) {
+        const storageRef = ref(storage, `vaccine_books/${Date.now()}_${vaccineImage.name}`);
+        const snapshot = await uploadBytes(storageRef, vaccineImage);
+        downloadUrl = await getDownloadURL(snapshot.ref);
+      }
 
       // 2. Save Booking Request to Firestore
       await addDoc(collection(db, 'public_bookings'), {
         ...formData,
         vaccineImage: downloadUrl,
-        serviceType: 'general',
         status: 'pending',
         createdAt: serverTimestamp()
       });
@@ -305,6 +313,47 @@ export default function CustomerBookingForm({ onSuccess, onBack }: CustomerBooki
                </div>
              )}
 
+             <div className="space-y-3 col-span-2">
+               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">บริการที่ต้องการนัดหมาย *</label>
+               <div className="grid grid-cols-1 gap-3">
+                 {[
+                   { id: 'vaccine', label: 'Vaccine (วัคซีน)', icon: Syringe, iconBg: 'bg-emerald-50 text-emerald-500' },
+                   { id: 'check-up', label: 'Check-up (ตรวจ)', icon: Stethoscope, iconBg: 'bg-indigo-50 text-indigo-500' },
+                   { id: 'surgery', label: 'Surgery (ผ่าตัด)', icon: Scissors, iconBg: 'bg-amber-50 text-amber-500' },
+                   { id: 'bathing', label: 'Bathing (อาบน้ำ)', icon: Droplets, iconBg: 'bg-sky-50 text-sky-500' }
+                 ].map(item => {
+                   const Icon = item.icon;
+                   const isSelected = formData.serviceType === item.id;
+                   return (
+                     <button
+                       type="button"
+                       key={item.id}
+                       onClick={() => setFormData({ ...formData, serviceType: item.id })}
+                       className={cn(
+                         "w-full text-left p-4 rounded-3xl border transition-all flex items-center justify-between",
+                         isSelected ? "bg-indigo-50/10 border-indigo-600 shadow-sm ring-2 ring-indigo-50" : "bg-white border-slate-150 hover:border-slate-200"
+                       )}
+                     >
+                       <div className="flex items-center gap-4">
+                         <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center", item.iconBg)}>
+                           <Icon className="w-6 h-6" />
+                         </div>
+                         <div>
+                           <p className="font-black text-slate-800 tracking-tight text-sm">{item.label}</p>
+                           <p className="text-xs text-slate-400 font-medium">Standard procedure</p>
+                         </div>
+                       </div>
+                       {isSelected && (
+                         <div className="w-6 h-6 bg-indigo-600 text-white rounded-full flex items-center justify-center animate-in scale-in duration-200">
+                           <CheckCircle2 className="w-4 h-4" />
+                         </div>
+                       )}
+                     </button>
+                   );
+                 })}
+               </div>
+             </div>
+
             <div className="space-y-2 col-span-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">วันที่ต้องการนัด *</label>
               <div className="relative">
@@ -320,44 +369,46 @@ export default function CustomerBookingForm({ onSuccess, onBack }: CustomerBooki
               </div>
             </div>
 
-            <div className="space-y-2 col-span-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">รูปถ่ายสมุดวัคซีน (บังคับ) *</label>
-              <div 
-                onClick={() => fileInputRef.current?.click()}
-                className={cn(
-                  "relative h-48 rounded-[2rem] border-2 border-dashed flex flex-col items-center justify-center gap-3 cursor-pointer transition-all overflow-hidden",
-                  vaccineImage ? "border-indigo-400 bg-indigo-50/30" : "border-slate-200 bg-slate-50 hover:bg-slate-100"
-                )}
-              >
-                <input 
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileChange}
-                  accept="image/*"
-                  className="hidden"
-                />
-                
-                {previewUrl ? (
-                  <div className="absolute inset-0 group">
-                    <img src={previewUrl} alt="Preview" className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white gap-2 font-bold">
-                      <Camera className="w-6 h-6" />
-                      เปลี่ยนรูปใหม่
+            {formData.serviceType !== 'bathing' && (
+              <div className="space-y-2 col-span-2 animate-in fade-in slide-in-from-top-4 duration-300">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">รูปถ่ายสมุดวัคซีน (บังคับ) *</label>
+                <div 
+                  onClick={() => fileInputRef.current?.click()}
+                  className={cn(
+                    "relative h-48 rounded-[2rem] border-2 border-dashed flex flex-col items-center justify-center gap-3 cursor-pointer transition-all overflow-hidden",
+                    vaccineImage ? "border-indigo-400 bg-indigo-50/30" : "border-slate-200 bg-slate-50 hover:bg-slate-100"
+                  )}
+                >
+                  <input 
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    accept="image/*"
+                    className="hidden"
+                  />
+                  
+                  {previewUrl ? (
+                    <div className="absolute inset-0 group">
+                      <img src={previewUrl} alt="Preview" className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white gap-2 font-bold">
+                        <Camera className="w-6 h-6" />
+                        เปลี่ยนรูปใหม่
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="w-12 h-12 bg-white rounded-2xl shadow-sm flex items-center justify-center text-slate-400">
-                      <Upload className="w-6 h-6" />
-                    </div>
-                    <div className="text-center">
-                      <p className="text-sm font-bold text-slate-600 tracking-tight">คลิกเพื่ออัปโหลดรูปสมุดวัคซีน</p>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">Required Attachment</p>
-                    </div>
-                  </>
-                )}
+                  ) : (
+                    <>
+                      <div className="w-12 h-12 bg-white rounded-2xl shadow-sm flex items-center justify-center text-slate-400">
+                        <Upload className="w-6 h-6" />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-sm font-bold text-slate-600 tracking-tight">คลิกเพื่ออัปโหลดรูปสมุดวัคซีน</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">Required Attachment</p>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="space-y-2 col-span-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">รายละเอียดเพิ่มเติม (ถ้ามี)</label>

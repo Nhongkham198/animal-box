@@ -94,9 +94,17 @@ export default function PublicBooking({ onOpenPublicForm }: PublicBookingProps) 
   const throwError = useAsyncError();
   const { user, isAuthReady, isStaff } = useAuth();
   const { setQuotaExceeded } = useClinic();
-  const [activeTab, setActiveTab] = useState<'requests' | 'condo' | 'bathing'>('requests');
+  const [activeTab, setActiveTab] = useState<'requests' | 'condo' | 'bathing'>(() => {
+    const saved = localStorage.getItem('bookingActiveTab');
+    if (saved === 'condo' || saved === 'bathing' || saved === 'requests') {
+      localStorage.removeItem('bookingActiveTab');
+      return saved;
+    }
+    return 'requests';
+  });
   const [copied, setCopied] = useState(false);
   const [bookings, setBookings] = useState<BookingRequest[]>([]);
+  const [appointments, setAppointments] = useState<any[]>([]);
   const [rooms, setRooms] = useState<PetRoom[]>([]);
   const [roomBookings, setRoomBookings] = useState<RoomBooking[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,6 +127,41 @@ export default function PublicBooking({ onOpenPublicForm }: PublicBookingProps) 
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [currentBooking, setCurrentBooking] = useState<Partial<RoomBooking>>({});
+
+  // Bathing Queue Visit Info Modal State
+  const [selectedBathingPet, setSelectedBathingPet] = useState<any | null>(null);
+  const [selectedBathingSize, setSelectedBathingSize] = useState<'Small' | 'Medium' | 'Large'>('Large');
+  const [selectedBathingTreatment, setSelectedBathingTreatment] = useState<boolean>(false);
+  const [selectedBathingNotes, setSelectedBathingNotes] = useState<string>('');
+
+  const handleBathingPetClick = (item: any) => {
+    setSelectedBathingPet(item);
+    setSelectedBathingSize(item.groomingSize || 'Large');
+    setSelectedBathingTreatment(item.groomingTreatment || false);
+    setSelectedBathingNotes(item.groomingNotes || '');
+  };
+
+  const handleSaveBathingInfo = async () => {
+    if (!selectedBathingPet) return;
+    try {
+      if (selectedBathingPet.type === 'appt') {
+        await updateDoc(doc(db, 'appointments', selectedBathingPet.id), {
+          groomingSize: selectedBathingSize,
+          groomingTreatment: selectedBathingTreatment,
+          groomingNotes: selectedBathingNotes
+        });
+      } else {
+        await updateDoc(doc(db, 'public_bookings', selectedBathingPet.id), {
+          groomingSize: selectedBathingSize,
+          groomingTreatment: selectedBathingTreatment,
+          groomingNotes: selectedBathingNotes
+        });
+      }
+      setSelectedBathingPet(null);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   useEffect(() => {
     if (!isAuthReady || !user || !isStaff) {
@@ -152,11 +195,19 @@ export default function PublicBooking({ onOpenPublicForm }: PublicBookingProps) 
       if (err.message.includes('quota') || err.message.includes('resource-exhausted')) setQuotaExceeded(true);
     });
 
+    // Listener for clinic appointments
+    const unsubAppointments = onSnapshot(collection(db, 'appointments'), (snap) => {
+      setAppointments(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      if (err.message.includes('quota') || err.message.includes('resource-exhausted')) setQuotaExceeded(true);
+    });
+
     setLoading(false);
     return () => {
       unsubPublic();
       unsubRooms();
       unsubRoomBookings();
+      unsubAppointments();
     };
   }, [isAuthReady, user, isStaff]);
 
@@ -592,6 +643,46 @@ export default function PublicBooking({ onOpenPublicForm }: PublicBookingProps) 
     );
   };
 
+  // Compute Combined Today's Bathing Queue
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+
+  const publicBathingToday = bookings.filter(b => {
+    const isBathing = b.serviceType?.toLowerCase() === 'bathing';
+    const isConfirmed = ['confirmed', 'completed'].includes(b.status?.toLowerCase() || '');
+    const isToday = b.requestedDate === todayStr;
+    return isBathing && isConfirmed && isToday;
+  }).map(b => ({
+    id: b.id,
+    petName: b.petName || 'Unknown Patient',
+    ownerName: b.ownerName || 'Unknown Owner',
+    ownerPhone: b.ownerPhone || '-',
+    type: 'public' as const,
+    groomingSize: (b as any).groomingSize || 'Large',
+    groomingTreatment: (b as any).groomingTreatment || false,
+    groomingNotes: (b as any).groomingNotes || ''
+  }));
+
+  const apptBathingToday = appointments.filter(appt => {
+    const isBathing = appt.serviceType?.toLowerCase() === 'bathing' || appt.activities?.toLowerCase().includes('bathing');
+    const isConfirmed = ['confirmed', 'completed', 'pending'].includes(appt.status?.toLowerCase() || '');
+    if (!isBathing || !isConfirmed) return false;
+
+    // We do not strictly filter appointments by date because the main "Appointments"
+    // page list shows all appointments under "Today List", making this consistent.
+    return true;
+  }).map(appt => ({
+    id: appt.id,
+    petName: appt.patientName || 'Unknown Patient',
+    ownerName: appt.ownerName || 'Walk-in',
+    ownerPhone: '-',
+    type: 'appt' as const,
+    groomingSize: appt.groomingSize || 'Large',
+    groomingTreatment: appt.groomingTreatment || false,
+    groomingNotes: appt.groomingNotes || ''
+  }));
+
+  const combinedTodayQueue = [...publicBathingToday, ...apptBathingToday];
+
   return (
     <div className="space-y-6">
       {/* Tabs */}
@@ -714,7 +805,7 @@ export default function PublicBooking({ onOpenPublicForm }: PublicBookingProps) 
                   <div>
                     <p className="text-[10px] font-black text-sky-400 uppercase tracking-widest">Today's Queue</p>
                     <p className="text-xl font-black text-sky-600">
-                      {bookings.filter(b => b.serviceType === 'bathing' && b.requestedDate === format(new Date(), 'yyyy-MM-dd') && b.status === 'confirmed').length} ตัว
+                      {combinedTodayQueue.length} ตัว
                     </p>
                   </div>
                 </div>
@@ -726,18 +817,30 @@ export default function PublicBooking({ onOpenPublicForm }: PublicBookingProps) 
               <div className="bg-white rounded-[3rem] border border-slate-100 p-8 shadow-sm space-y-6">
                 <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Today's Confirmed Queue</h3>
                 <div className="space-y-4">
-                  {bookings.filter(b => b.serviceType === 'bathing' && b.requestedDate === format(new Date(), 'yyyy-MM-dd') && b.status === 'confirmed').length > 0 ? (
-                    bookings.filter(b => b.serviceType === 'bathing' && b.requestedDate === format(new Date(), 'yyyy-MM-dd') && b.status === 'confirmed').map(b => (
-                      <div key={b.id} className="flex items-center gap-4 p-4 bg-slate-50 rounded-[2rem] border border-transparent hover:border-sky-200 transition-all hover:bg-sky-50/50 group">
+                  {combinedTodayQueue.length > 0 ? (
+                    combinedTodayQueue.map(item => (
+                      <div 
+                        key={item.id} 
+                        onClick={() => handleBathingPetClick(item)}
+                        className="flex items-center gap-4 p-4 bg-slate-50 rounded-[2rem] border border-transparent hover:border-sky-200 cursor-pointer transition-all hover:bg-sky-50/50 group"
+                      >
                         <div className="w-12 h-12 rounded-2xl bg-white shadow-sm flex items-center justify-center text-sky-500 font-black">
-                          {b.petName.charAt(0)}
+                          {item.petName.charAt(0)}
                         </div>
                         <div className="flex-1">
-                          <p className="font-black text-slate-700">{b.petName}</p>
-                          <p className="text-[10px] font-bold text-slate-400">{b.ownerName} • {b.ownerPhone}</p>
+                          <p className="font-black text-slate-700">{item.petName}</p>
+                          <p className="text-[10px] font-bold text-slate-400">
+                            {item.ownerName} {item.ownerPhone && item.ownerPhone !== '-' ? `• ${item.ownerPhone}` : ''}
+                            {item.type === 'appt' ? ' • Clinic Appointment' : ' • Public Booking'}
+                          </p>
                         </div>
                         <div className="text-right">
-                          <span className="px-3 py-1 bg-sky-100 text-sky-600 rounded-full text-[10px] font-black uppercase tracking-widest">Confirmed</span>
+                          <span className={cn(
+                            "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                            item.type === 'appt' ? "bg-indigo-100 text-indigo-600" : "bg-sky-100 text-sky-600"
+                          )}>
+                            {item.type === 'appt' ? 'Clinic' : 'Confirmed'}
+                          </span>
                         </div>
                       </div>
                     ))
@@ -1298,6 +1401,155 @@ export default function PublicBooking({ onOpenPublicForm }: PublicBookingProps) 
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Bathing Queue Visit Info Modal */}
+      <AnimatePresence>
+        {selectedBathingPet && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
+            onClick={() => setSelectedBathingPet(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              transition={{ type: "spring", duration: 0.5 }}
+              className="bg-white rounded-[3rem] w-full max-w-md overflow-hidden border border-slate-100 shadow-2xl relative"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="p-8 pb-4 flex justify-between items-center border-b border-slate-50">
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                  VISIT INFO
+                </h3>
+                <button
+                  onClick={() => setSelectedBathingPet(null)}
+                  className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Content */}
+              <div className="p-8 space-y-6">
+                <div className="space-y-1 text-center md:text-left">
+                  <p className="text-[10px] font-black text-sky-500 uppercase tracking-widest">Selected Pet</p>
+                  <h4 className="text-2xl font-black text-slate-800 tracking-tight">{selectedBathingPet.petName}</h4>
+                  <p className="text-xs font-bold text-slate-400">{selectedBathingPet.ownerName} {selectedBathingPet.ownerPhone && selectedBathingPet.ownerPhone !== '-' ? `• ${selectedBathingPet.ownerPhone}` : ''}</p>
+                </div>
+
+                {/* Category Buttons */}
+                <div className="p-2 bg-slate-50 border border-slate-100 rounded-[2.5rem] space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    {['Treatment', 'Grooming', 'Vaccine', 'Other'].map((cat) => {
+                      const isGrooming = cat === 'Grooming';
+                      return (
+                        <button
+                          key={cat}
+                          type="button"
+                          disabled={!isGrooming}
+                          className={cn(
+                            "px-4 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border",
+                            isGrooming 
+                              ? "bg-[#00b4d8] text-white border-[#00b4d8] shadow-lg shadow-cyan-100" 
+                              : "bg-white text-slate-300 border-slate-100 cursor-not-allowed opacity-50"
+                          )}
+                        >
+                          {cat}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Grooming Details Sub-container */}
+                  <div className="p-4 bg-white border border-slate-100 rounded-2xl space-y-4 shadow-sm">
+                    {/* Size Selection */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block ml-1">
+                        Size Selection
+                      </label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {['Small', 'Medium', 'Large'].map((size) => (
+                          <button
+                            key={size}
+                            type="button"
+                            onClick={() => setSelectedBathingSize(size as any)}
+                            className={cn(
+                              "px-2 py-2 rounded-xl text-[10px] font-black uppercase transition-all border",
+                              selectedBathingSize === size 
+                                ? "bg-amber-500 text-white border-amber-500 shadow-md" 
+                                : "bg-slate-50 text-slate-400 border-slate-100 hover:bg-slate-100"
+                            )}
+                          >
+                            {size}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Treatment Toggle */}
+                    <div className="flex items-center justify-between p-2 bg-slate-50 rounded-xl border border-slate-100">
+                      <div className="flex items-center gap-2 px-2">
+                        <div className={cn(
+                          "w-4 h-4 rounded-md border-2 flex items-center justify-center transition-all",
+                          selectedBathingTreatment ? "bg-emerald-500 border-emerald-500" : "bg-white border-slate-200"
+                        )}>
+                          {selectedBathingTreatment && <Check className="w-3 h-3 text-white" />}
+                        </div>
+                        <span className="text-[10px] font-black text-slate-600 uppercase tracking-wider">
+                          Treatment
+                        </span>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => setSelectedBathingTreatment(!selectedBathingTreatment)}
+                        className="text-[9px] font-black text-emerald-600 uppercase bg-white px-3 py-1.5 rounded-lg border border-emerald-100 hover:bg-emerald-50 transition-colors"
+                      >
+                        {selectedBathingTreatment ? 'Enabled' : 'Click to Enable'}
+                      </button>
+                    </div>
+
+                    {/* Notes (หมายเหตุ) */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block ml-1">
+                        Notes (หมายเหตุ)
+                      </label>
+                      <textarea 
+                        value={selectedBathingNotes}
+                        onChange={e => setSelectedBathingNotes(e.target.value)}
+                        rows={2}
+                        className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 text-[11px] font-medium focus:ring-4 focus:ring-amber-50 outline-none transition-all placeholder:text-slate-300"
+                        placeholder="รายละเอียดเพิ่มเติมสำหรับการกรูมมิ่ง..."
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Save and cancel actions */}
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedBathingPet(null)}
+                    className="flex-1 py-4 bg-slate-50 hover:bg-slate-100 text-slate-500 rounded-2xl text-xs font-black uppercase tracking-widest transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveBathingInfo}
+                    className="flex-1 py-4 bg-[#00b4d8] hover:bg-[#0077b6] text-white rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-cyan-100"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

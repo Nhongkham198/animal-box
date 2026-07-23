@@ -382,12 +382,12 @@ export default function Inventory() {
             </div>
           ) : filteredItems.length > 0 ? (
             <div className="divide-y divide-slate-50">
-              {filteredItems.map((item) => {
+              {filteredItems.map((item, index) => {
                 const status = getStockStatus(item);
                 const progress = Math.min(100, Math.max(0, ((item.currentStock || 0) / (item.initialStock || 1)) * 100));
                 
                 return (
-                  <div key={item.id} className="p-8 grid grid-cols-12 items-center hover:bg-slate-50/20 transition-all group">
+                  <div key={`inv-item-${item.id || 'id'}-${index}`} className="p-8 grid grid-cols-12 items-center hover:bg-slate-50/20 transition-all group">
                     <div className="col-span-4 flex items-center gap-5">
                       <div className={cn(
                         "w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner relative transition-transform group-hover:scale-105",

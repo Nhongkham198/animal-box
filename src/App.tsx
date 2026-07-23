@@ -111,8 +111,29 @@ function AppContent() {
   const { user, loading, isAuthReady, authError } = useAuth();
   const { clinicName, quotaExceeded } = useClinic();
   const [activeView, setActiveView] = useState<View>('dashboard');
+  const [viewHistory, setViewHistory] = useState<View[]>(['dashboard']);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
+
+  const navigateToView = (nextView: View) => {
+    setViewHistory(prev => {
+      // Don't add consecutive duplicates
+      if (prev[prev.length - 1] === nextView) return prev;
+      return [...prev, nextView];
+    });
+    setActiveView(nextView);
+  };
+
+  const handleBack = () => {
+    if (viewHistory.length <= 1) return;
+    setViewHistory(prev => {
+      const newHistory = [...prev];
+      newHistory.pop(); // remove current view
+      const prevView = newHistory[newHistory.length - 1];
+      setActiveView(prevView);
+      return newHistory;
+    });
+  };
 
   const [localAuthError, setLocalAuthError] = useState<string | null>(null);
   const [loginMethod, setLoginMethod] = useState<'google' | 'email'>('google');
@@ -196,8 +217,8 @@ function AppContent() {
   useEffect(() => {
     const handleResize = () => {
       const sidebarWidth = isSidebarOpen ? 288 : 80;
-      const maxNegativeX = - (window.innerWidth - sidebarWidth - 112);
-      const maxNegativeY = - (window.innerHeight - 208);
+      const maxNegativeX = - (window.innerWidth - sidebarWidth - 96);
+      const maxNegativeY = - (window.innerHeight - 184);
 
       setFabCoords({
         x: fabSide === 'left' ? maxNegativeX : 0,
@@ -212,8 +233,8 @@ function AppContent() {
 
   const onDragEnd = (_: any, info: any) => {
     const sidebarWidth = isSidebarOpen ? 288 : 80;
-    const maxNegativeX = - (window.innerWidth - sidebarWidth - 112);
-    const maxNegativeY = - (window.innerHeight - 208);
+    const maxNegativeX = - (window.innerWidth - sidebarWidth - 96);
+    const maxNegativeY = - (window.innerHeight - 184);
 
     const pointerX = info.point.x;
     const pointerY = info.point.y;
@@ -418,12 +439,12 @@ function AppContent() {
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-slate-50 flex overflow-hidden">
+      <div className="h-screen bg-slate-50 flex overflow-hidden">
         <Sidebar 
           isOpen={isSidebarOpen}
           setIsOpen={setIsSidebarOpen}
           activeView={activeView}
-          setActiveView={setActiveView}
+          setActiveView={navigateToView}
           expandedGroups={expandedGroups}
           toggleGroup={toggleGroup}
           handleLogout={handleLogout}
@@ -432,7 +453,7 @@ function AppContent() {
         {/* Main Content */}
         <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
           {quotaExceeded && (
-            <div className="bg-rose-500 text-white px-6 py-3 flex items-center justify-between gap-4 animate-in slide-in-from-top duration-300">
+            <div className="bg-rose-500 text-white px-6 py-3 flex items-between justify-between gap-4 animate-in slide-in-from-top duration-300">
               <div className="flex items-center gap-3">
                 <AlertCircle className="w-5 h-5 shrink-0" />
                 <div className="text-xs md:text-sm font-bold uppercase tracking-tight">
@@ -448,7 +469,12 @@ function AppContent() {
               </button>
             </div>
           )}
-          <Header activeView={activeView} setActiveView={setActiveView} />
+          <Header 
+            activeView={activeView} 
+            setActiveView={navigateToView} 
+            onBack={handleBack}
+            canGoBack={viewHistory.length > 1}
+          />
 
           {/* View Content */}
           <div className="flex-1 overflow-y-auto p-8">
@@ -471,18 +497,18 @@ function AppContent() {
                   {activeView === 'settings-usage' && <UsageSetting />}
                   {activeView === 'settings-payment' && <PaymentMethodSetting />}
                   {activeView === 'settings-printer' && <PrinterSetting />}
-                  {activeView === 'appointments' && <Appointments setActiveView={setActiveView} />}
-                  {activeView === 'calendar' && <CalendarView setActiveView={setActiveView} />}
+                  {activeView === 'appointments' && <Appointments setActiveView={navigateToView} />}
+                  {activeView === 'calendar' && <CalendarView setActiveView={navigateToView} />}
                   {activeView === 'add-appointment' && <AddAppointment />}
                   {activeView === 'search-microchip' && <SearchMicrochip />}
-                  {activeView === 'opd' && <OPDList setActiveView={setActiveView} />}
+                  {activeView === 'opd' && <OPDList setActiveView={navigateToView} />}
                   {activeView === 'ipd' && <IPDList />}
                   {(activeView === 'patients' || activeView === 'add-pet') && <Patients />}
                   {activeView === 'inventory' && <Inventory />}
                   {activeView === 'pos' && <POS />}
                   {activeView === 'analytics' && <Analytics />}
                   {activeView === 'finance' && <Finance />}
-                  {activeView === 'public-booking' && <PublicBooking onOpenPublicForm={() => setActiveView('public-form')} />}
+                  {activeView === 'public-booking' && <PublicBooking onOpenPublicForm={() => navigateToView('public-form')} />}
                   {activeView.startsWith('settings') && 
                     activeView !== 'settings-hospital' && 
                     activeView !== 'settings-vet' && 
@@ -507,9 +533,9 @@ function AppContent() {
           layout
           drag
           dragConstraints={{
-            left: - (window.innerWidth - (isSidebarOpen ? 288 : 80) - 112),
+            left: - (window.innerWidth - (isSidebarOpen ? 288 : 80) - 96),
             right: 0,
-            top: - (window.innerHeight - 208),
+            top: - (window.innerHeight - 184),
             bottom: 0
           }}
           dragMomentum={false}
@@ -544,7 +570,7 @@ function AppContent() {
             ].map((item) => (
               <button 
                 key={item.id}
-                onClick={() => item.action ? item.action() : setActiveView(item.id as View)}
+                onClick={() => item.action ? item.action() : navigateToView(item.id as View)}
                 className={cn(
                   "flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all whitespace-nowrap",
                   fabSide === 'right' ? "flex-row" : "flex-row-reverse"

@@ -120,8 +120,8 @@ export default function AddAppointment() {
                   <td colSpan={5} className="px-8 py-20 text-center text-slate-400">Loading...</td>
                 </tr>
               ) : filteredPatients.length > 0 ? (
-                filteredPatients.map((patient) => (
-                  <tr key={patient.id} className="hover:bg-slate-50/50 transition-colors cursor-pointer group">
+                filteredPatients.map((patient, pIdx) => (
+                  <tr key={`add-appt-pt-${patient.id || 'p'}-${pIdx}`} className="hover:bg-slate-50/50 transition-colors cursor-pointer group">
                     <td className="px-8 py-4 font-medium text-slate-600">{patient.hn || '-'}</td>
                     <td className="px-8 py-4 font-bold text-slate-900 group-hover:text-[#00b4d8]">{patient.name}</td>
                     <td className="px-8 py-4 text-slate-600">{patient.species}</td>

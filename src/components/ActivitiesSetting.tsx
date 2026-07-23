@@ -568,7 +568,7 @@ export default function ActivitiesSetting() {
             </thead>
             <tbody className="divide-y divide-slate-50">
               {activities.map((activity, index) => (
-                <tr key={activity.id} className="hover:bg-slate-50/50 transition-colors group">
+                <tr key={`activity-${activity.id || 'act'}-${index}`} className="hover:bg-slate-50/50 transition-colors group">
                   <td className="px-6 py-4 text-center font-medium text-slate-500">{index + 1}</td>
                   <td className="px-6 py-4">
                     <div className="font-bold text-slate-700">{activity.name}</div>

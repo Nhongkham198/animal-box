@@ -10,7 +10,11 @@ import {
   ArrowRight,
   XCircle,
   X,
-  PawPrint
+  PawPrint,
+  ExternalLink,
+  Edit,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -21,6 +25,9 @@ import {
   orderBy,
   doc,
   updateDoc,
+  addDoc,
+  deleteDoc,
+  serverTimestamp,
   handleFirestoreError,
   OperationType
 } from '../firebase';
@@ -31,6 +38,7 @@ import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 import AddPatientModal from './AddPatientModal';
 import AddAppointmentModal from './AddAppointmentModal';
+import EditAppointmentModal from './EditAppointmentModal';
 
 interface Appointment {
   id: string;
@@ -42,6 +50,7 @@ interface Appointment {
   visitType?: 'OPD' | 'IPD';
   startTime: any;
   status: string;
+  notes?: string;
 }
 
 interface AppointmentsProps {
@@ -57,7 +66,20 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
   const [loading, setLoading] = useState(true);
   const [isAddPatientModalOpen, setIsAddPatientModalOpen] = useState(false);
   const [isAddAppointmentModalOpen, setIsAddAppointmentModalOpen] = useState(false);
+  const [isEditingMode, setIsEditingMode] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [selectedAppointmentForEdit, setSelectedAppointmentForEdit] = useState<Appointment | null>(null);
   const [viewingStatusList, setViewingStatusList] = useState<string | null>(null);
+  const [appointmentToDelete, setAppointmentToDelete] = useState<Appointment | null>(null);
+
+  const handleDeleteAppointment = async (apptId: string) => {
+    try {
+      await deleteDoc(doc(db, 'appointments', apptId));
+      setAppointmentToDelete(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `appointments/${apptId}`);
+    }
+  };
 
   useEffect(() => {
     if (!isAuthReady || !user || !isStaff) return;
@@ -77,11 +99,58 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
     return () => unsubscribe();
   }, [isAuthReady, user, isStaff, setQuotaExceeded]);
 
-  const handleUpdateStatus = async (apptId: string, newStatus: string) => {
+  const handleUpdateStatus = async (apptId: string, newStatus: string, appt?: Appointment) => {
     try {
       await updateDoc(doc(db, 'appointments', apptId), {
         status: newStatus
       });
+
+      if (newStatus === 'completed' && appt && appt.visitType) {
+        if (appt.visitType === 'OPD') {
+          await addDoc(collection(db, 'opd_records'), {
+            patientId: appt.patientId || '',
+            petName: appt.patientName || '',
+            ownerName: appt.ownerName || '',
+            category: appt.serviceType === 'vaccine' ? 'Vaccine' : appt.serviceType === 'grooming' ? 'Grooming' : 'Treatment',
+            finalDiagnosis: appt.serviceType || appt.activities || '',
+            status: 'In Progress',
+            billingStatus: 'none',
+            revenue: 0,
+            items: [],
+            attachments: [],
+            vitals: { weight: '', temp: '', heartRate: '', respiratoryRate: '' },
+            treatmentTx: '',
+            recipereRx: '',
+            physicalExaminationPe: '',
+            plan: '',
+            clientEducation: '',
+            chiefComplaint: appt.notes || '',
+            historyTaking: '',
+            problemList: '',
+            typeOfFood: '',
+            isFollowUp: false,
+            groomingSize: 'Small',
+            groomingTreatment: false,
+            groomingNotes: '',
+            dateVisit: serverTimestamp(),
+            createdAt: serverTimestamp()
+          });
+        } else if (appt.visitType === 'IPD') {
+          await addDoc(collection(db, 'ipd_records'), {
+            patientId: appt.patientId || '',
+            petName: appt.patientName || '',
+            ownerName: appt.ownerName || '',
+            cageNumber: 'TBD',
+            diagnosis: appt.serviceType || appt.activities || 'Admitted from Appointment',
+            treatmentPlan: appt.notes || 'Initial evaluation',
+            status: 'Admitted',
+            billingStatus: 'none',
+            dateAdmit: serverTimestamp(),
+            dailyNotes: [],
+            createdAt: serverTimestamp()
+          });
+        }
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `appointments/${apptId}`);
     }
@@ -97,6 +166,28 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
     }
   };
 
+  const handleGoToOPD = async (appt: Appointment) => {
+    try {
+      if (appt.status !== 'completed') {
+        await handleUpdateStatus(appt.id, 'completed', appt);
+      }
+      setActiveView('opd');
+    } catch (err) {
+      console.error("Error going to OPD:", err);
+    }
+  };
+
+  const handleGoToIPD = async (appt: Appointment) => {
+    try {
+      if (appt.status !== 'completed') {
+        await handleUpdateStatus(appt.id, 'completed', appt);
+      }
+      setActiveView('ipd');
+    } catch (err) {
+      console.error("Error going to IPD:", err);
+    }
+  };
+
   const opdAppointments = appointments.filter(app => app.visitType === 'OPD');
   const ipdAppointments = appointments.filter(app => app.visitType === 'IPD');
   const rescheduledApps = appointments.filter(app => app.status === 'rescheduled');
@@ -106,6 +197,18 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
     <div className="space-y-8">
       {/* Top Action Buttons */}
       <div className="flex justify-end gap-2">
+        <button 
+          onClick={() => setIsEditingMode(!isEditingMode)}
+          className={cn(
+            "flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all text-sm shadow-sm",
+            isEditingMode 
+              ? "bg-rose-600 text-white hover:bg-rose-700" 
+              : "bg-white text-slate-700 hover:bg-slate-50 border border-slate-200"
+          )}
+        >
+          <Edit className="w-4 h-4" />
+          {isEditingMode ? 'เสร็จสิ้น' : 'แก้ไขรายการ'}
+        </button>
         <button 
           onClick={() => setIsAddAppointmentModalOpen(true)}
           className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700 transition-all text-sm shadow-sm"
@@ -126,13 +229,6 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
         >
           <Calendar className="w-4 h-4" />
           Calendar
-        </button>
-        <button 
-          onClick={() => setActiveView('patients')}
-          className="flex items-center gap-2 px-4 py-2 bg-[#c1a386] text-white rounded-lg font-bold hover:bg-[#b08968] transition-all text-sm shadow-sm"
-        >
-          <LayoutGrid className="w-4 h-4" />
-          Pet Profile
         </button>
       </div>
 
@@ -181,6 +277,9 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
                     <div className="flex items-center gap-1">Status <ArrowRight className="w-3 h-3 rotate-[-45deg]" /></div>
                   </th>
                   <th className="px-8 py-4 font-bold text-slate-400 uppercase tracking-wider text-center">Mark Done</th>
+                  {isEditingMode && (
+                    <th className="px-8 py-4 font-bold text-slate-400 uppercase tracking-wider text-center bg-rose-50/30">Actions / จัดการ</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -194,7 +293,7 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
                         <div className="font-black text-slate-800">{appt.patientName}</div>
                       </td>
                       <td className="px-8 py-4 font-bold text-slate-500">
-                        {appt.serviceType}
+                        {appt.serviceType || appt.activities || '-'}
                       </td>
                       <td className="px-8 py-4">
                         <div className="flex items-center gap-2">
@@ -225,7 +324,7 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
                       <td className="px-8 py-4">
                         <select
                           value={appt.status}
-                          onChange={(e) => handleUpdateStatus(appt.id, e.target.value)}
+                          onChange={(e) => handleUpdateStatus(appt.id, e.target.value, appt)}
                           className={cn(
                             "text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full outline-none border-none cursor-pointer",
                             appt.status === 'completed' ? "bg-emerald-100 text-emerald-600" :
@@ -244,28 +343,72 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
                         </select>
                       </td>
                       <td className="px-8 py-4 text-center">
-                        <button 
-                          disabled={appt.status === 'completed' || !appt.visitType}
-                          onClick={() => handleUpdateStatus(appt.id, 'completed')}
-                          title={!appt.visitType ? "กรุณาเลือกประเภท OPD/IPD ก่อนจบงาน" : "คลิกเพื่อจบงาน"}
-                          className={cn(
-                            "px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 mx-auto",
-                            appt.status === 'completed' 
-                              ? "bg-emerald-50 text-emerald-400 border border-emerald-100" 
-                              : !appt.visitType
-                                ? "bg-slate-50 text-slate-300 border border-slate-100 cursor-not-allowed"
-                                : "bg-emerald-500 text-white shadow-lg shadow-emerald-100 hover:bg-emerald-600"
-                          )}
-                        >
-                          <CheckCircle2 className="w-4 h-4" />
-                          {appt.status === 'completed' ? 'Finished' : 'Finish Work'}
-                        </button>
+                        {(appt.serviceType?.toLowerCase().includes('bathing') || appt.activities?.toLowerCase().includes('bathing')) ? (
+                          <button 
+                            onClick={() => {
+                              localStorage.setItem('bookingActiveTab', 'bathing');
+                              setActiveView('public-booking');
+                            }}
+                            className="px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 mx-auto bg-sky-500 hover:bg-sky-600 text-white shadow-lg shadow-sky-100"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                            Go to BATHING ROOM
+                          </button>
+                        ) : appt.visitType === 'OPD' ? (
+                          <button 
+                            onClick={() => handleGoToOPD(appt)}
+                            className="px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 mx-auto bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-100"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                            Go to OPD
+                          </button>
+                        ) : appt.visitType === 'IPD' ? (
+                          <button 
+                            onClick={() => handleGoToIPD(appt)}
+                            className="px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 mx-auto bg-amber-500 hover:bg-amber-600 text-white shadow-lg shadow-amber-100"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                            Go to IPD
+                          </button>
+                        ) : (
+                          <button 
+                            disabled={true}
+                            title="กรุณาเลือกประเภท OPD/IPD ก่อนจบงาน"
+                            className="px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 mx-auto bg-slate-50 text-slate-300 border border-slate-100 cursor-not-allowed"
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                            Finish Work
+                          </button>
+                        )}
                       </td>
+                      {isEditingMode && (
+                        <td className="px-8 py-4 text-center bg-rose-50/10">
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              onClick={() => {
+                                setSelectedAppointmentForEdit(appt);
+                                setIsEditModalOpen(true);
+                              }}
+                              className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl transition-all flex items-center justify-center border border-indigo-100"
+                              title="แก้ไขข้อมูล"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => setAppointmentToDelete(appt)}
+                              className="p-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl transition-all flex items-center justify-center border border-rose-100"
+                              title="ลบรายการ"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={5} className="px-8 py-24 text-center">
+                    <td colSpan={isEditingMode ? 7 : 6} className="px-8 py-24 text-center">
                       <div className="flex flex-col items-center gap-4">
                         <div className="relative w-80 h-80 opacity-60">
                           <img 
@@ -291,7 +434,10 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 space-y-8">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-black text-slate-800">OPD สัตว์ป่วยนอก</h3>
-              <button className="flex items-center gap-2 px-4 py-2 bg-[#d8b4fe] text-slate-700 rounded-lg font-bold hover:bg-[#e9d5ff] transition-all text-sm shadow-sm">
+              <button 
+                onClick={() => setActiveView('opd')}
+                className="flex items-center gap-2 px-4 py-2 bg-[#d8b4fe] text-slate-700 rounded-lg font-bold hover:bg-[#e9d5ff] transition-all text-sm shadow-sm"
+              >
                 <Plus className="w-4 h-4" />
                 OPD Record
               </button>
@@ -356,7 +502,16 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
 
           {/* IPD Card */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 space-y-8">
-            <h3 className="text-xl font-black text-slate-800">IPD สัตว์ป่วยใน</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-black text-slate-800">IPD สัตว์ป่วยใน</h3>
+              <button 
+                onClick={() => setActiveView('ipd')}
+                className="flex items-center gap-2 px-4 py-2 bg-[#fcd34d] text-slate-800 rounded-lg font-bold hover:bg-[#fde68a] transition-all text-sm shadow-sm"
+              >
+                <Plus className="w-4 h-4" />
+                IPD Record
+              </button>
+            </div>
 
             <div className="space-y-4">
               <div className="flex items-center justify-between">
@@ -433,6 +588,63 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
         isOpen={isAddAppointmentModalOpen} 
         onClose={() => setIsAddAppointmentModalOpen(false)} 
       />
+
+      <EditAppointmentModal 
+        isOpen={isEditModalOpen} 
+        onClose={() => {
+          setIsEditModalOpen(false);
+          setSelectedAppointmentForEdit(null);
+        }} 
+        appointment={selectedAppointmentForEdit}
+      />
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {appointmentToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setAppointmentToDelete(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden p-8 text-center space-y-6 z-10 border border-slate-100"
+            >
+              <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-3xl flex items-center justify-center mx-auto shadow-inner">
+                <AlertTriangle className="w-8 h-8" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-xl font-black text-slate-800">ท่านต้องการลบข้อมูลนี้ใช่หรือไม่?</h3>
+                <p className="text-slate-500 text-sm leading-relaxed">
+                  คุณต้องการลบข้อมูลการนัดหมายของ <span className="font-extrabold text-slate-700">{appointmentToDelete.patientName}</span> หรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้
+                </p>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button 
+                  type="button"
+                  onClick={() => setAppointmentToDelete(null)}
+                  className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-black uppercase tracking-widest hover:bg-slate-200 transition-all text-xs"
+                >
+                  ย้อนกลับ
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => handleDeleteAppointment(appointmentToDelete.id)}
+                  className="flex-1 py-4 bg-rose-600 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-rose-700 hover:scale-[1.02] active:scale-[0.98] transition-all text-xs shadow-lg shadow-rose-200 flex items-center justify-center gap-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  ใช่ ลบข้อมูล
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Status List Modal */}
       <AnimatePresence>

@@ -244,6 +244,24 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["labelWidth", "labelHeight", "gap"]
+    },
+    "IPDRecord": {
+      "title": "IPD Medical Record",
+      "description": "Inpatient department medical and boarding records.",
+      "type": "object",
+      "properties": {
+        "dateAdmit": { "type": "string", "format": "date-time" },
+        "dateDischarge": { "type": "string", "format": "date-time" },
+        "patientId": { "type": "string" },
+        "petName": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "cageNumber": { "type": "string" },
+        "status": { "type": "string", "enum": ["Admitted", "Observation", "Discharged"] },
+        "diagnosis": { "type": "string" },
+        "treatmentPlan": { "type": "string" },
+        "billingStatus": { "type": "string", "enum": ["unpaid", "paid", "none"] }
+      },
+      "required": ["dateAdmit", "patientId", "petName", "status", "cageNumber"]
     }
   },
   "firestore": {
@@ -274,6 +292,10 @@
     "/opd_records/{recordId}": {
       "schema": "OPDRecord",
       "description": "OPD medical history."
+    },
+    "/ipd_records/{recordId}": {
+      "schema": "IPDRecord",
+      "description": "IPD medical and boarding history."
     },
     "/expenses/{expenseId}": {
       "schema": "Expense",

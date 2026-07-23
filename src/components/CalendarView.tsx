@@ -54,6 +54,7 @@ interface Appointment {
   patientName: string;
   ownerName: string;
   activities: string;
+  serviceType?: string;
   startTime: any;
   status: string;
   notes?: string;
@@ -214,7 +215,7 @@ export default function CalendarView({ setActiveView }: CalendarViewProps) {
 
         days.push(
           <div
-            key={day.toString()}
+            key={`cal-day-${cloneDay.toISOString()}`}
             className={cn(
               "min-h-[120px] bg-white border border-slate-100 p-2 transition-all flex flex-col gap-1",
               !isSameMonth(day, monthStart) ? "bg-slate-50/50 text-slate-300" : "text-slate-700",
@@ -237,9 +238,9 @@ export default function CalendarView({ setActiveView }: CalendarViewProps) {
             </div>
             
             <div className="flex-1 overflow-y-auto space-y-1 custom-scrollbar">
-              {dayAppointments.slice(0, 3).map((app) => (
+              {dayAppointments.slice(0, 3).map((app, appIdx) => (
                 <div 
-                  key={app.id}
+                  key={`cal-app-${app.id}-${appIdx}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     setSelectedAppointment(app);
@@ -273,7 +274,7 @@ export default function CalendarView({ setActiveView }: CalendarViewProps) {
         day = addDays(day, 1);
       }
       rows.push(
-        <div className="grid grid-cols-7" key={day.toString()}>
+        <div className="grid grid-cols-7" key={`week-row-${day.toISOString()}`}>
           {days}
         </div>
       );
@@ -409,16 +410,30 @@ export default function CalendarView({ setActiveView }: CalendarViewProps) {
                 {/* Actions */}
                 <div className="flex gap-4">
                   {!isEditing && (
-                    <button 
-                      onClick={() => {
-                        setSelectedAppointment(null);
-                        setActiveView('opd');
-                      }}
-                      className="flex-1 py-4 bg-[#00b4d8] text-white rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-cyan-100 hover:bg-[#0096b1] transition-all flex items-center justify-center gap-2"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      Go to OPD
-                    </button>
+                    (selectedAppointment.activities?.toLowerCase().includes('bathing') || selectedAppointment.serviceType?.toLowerCase().includes('bathing')) ? (
+                      <button 
+                        onClick={() => {
+                          setSelectedAppointment(null);
+                          localStorage.setItem('bookingActiveTab', 'bathing');
+                          setActiveView('public-booking');
+                        }}
+                        className="flex-1 py-4 bg-sky-500 text-white rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-sky-100 hover:bg-sky-600 transition-all flex items-center justify-center gap-2 animate-in fade-in"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        Go to BATHING ROOM
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={() => {
+                          setSelectedAppointment(null);
+                          setActiveView('opd');
+                        }}
+                        className="flex-1 py-4 bg-[#00b4d8] text-white rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-cyan-100 hover:bg-[#0096b1] transition-all flex items-center justify-center gap-2"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        Go to OPD
+                      </button>
+                    )
                   )}
                   
                   {isEditing ? (

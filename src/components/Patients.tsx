@@ -1012,11 +1012,11 @@ export default function Patients() {
                   
                   <div className="pt-4 border-t border-slate-100 space-y-4">
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Owner(s)</p>
-                    {selectedPatient.ownerIds?.map((id) => {
+                    {selectedPatient.ownerIds?.map((id, oIdx) => {
                       const owner = ownersMap[id];
                       if (!owner) return null;
                       return (
-                        <div key={`owner-detail-${id}`} className="space-y-2 p-3 bg-white rounded-2xl border border-slate-100 shadow-sm">
+                        <div key={`owner-detail-${id || 'noid'}-${oIdx}`} className="space-y-2 p-3 bg-white rounded-2xl border border-slate-100 shadow-sm">
                           <div className="flex items-center gap-3">
                             <div className="w-10 h-10 rounded-xl bg-slate-50 border border-slate-100 overflow-hidden flex-shrink-0">
                               {owner.photoURL ? (
@@ -1122,7 +1122,7 @@ export default function Patients() {
                       <div className="text-center py-20 text-slate-400">Loading timeline...</div>
                     ) : timelineData.length > 0 ? (
                       timelineData.map((item, i) => (
-                        <div key={item.id} className="relative pl-12">
+                        <div key={`pt-timeline-${item.type}-${item.id || 'item'}-${i}`} className="relative pl-12">
                           <div className={cn(
                             "absolute left-0 top-0 w-10 h-10 rounded-xl flex items-center justify-center z-10 shadow-sm border border-white",
                             item.type === 'OPD' ? "bg-blue-50 text-blue-500" : "bg-rose-50 text-rose-500"
@@ -1172,7 +1172,7 @@ export default function Patients() {
                   <div className="space-y-4">
                     {selectedPatient.medicalHistory && selectedPatient.medicalHistory.length > 0 ? (
                       selectedPatient.medicalHistory.map((h, i) => (
-                        <div key={h.id || `history-${i}`} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-2">
+                        <div key={`history-item-${h.id || 'record'}-${i}`} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-black text-slate-400 uppercase tracking-widest">
                               {h.date?.toDate ? format(h.date.toDate(), 'dd MMM yyyy') : format(new Date(h.date), 'dd MMM yyyy')}
@@ -1194,7 +1194,7 @@ export default function Patients() {
                   <div className="space-y-4">
                     {selectedPatient.vaccineRecords && selectedPatient.vaccineRecords.length > 0 ? (
                       selectedPatient.vaccineRecords.map((v, i) => (
-                        <div key={v.id || `vaccine-${i}`} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
+                        <div key={`vaccine-item-${v.id || 'record'}-${i}`} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
                           <div className="flex items-center gap-4">
                             <div className="w-10 h-10 bg-orange-50 rounded-xl flex items-center justify-center">
                               <Syringe className="w-5 h-5 text-orange-500" />

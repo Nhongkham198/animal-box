@@ -398,7 +398,7 @@ export default function ContactSetting() {
                 </tr>
               ) : (
                 contacts.map((contact, index) => (
-                  <tr key={contact.id} className="hover:bg-slate-50/50 transition-colors">
+                  <tr key={`contact-${contact.id || 'c'}-${index}`} className="hover:bg-slate-50/50 transition-colors">
                     <td className="px-6 py-4 text-center font-medium text-slate-500">{index + 1}</td>
                     <td className="px-6 py-4">
                       <span className={cn(

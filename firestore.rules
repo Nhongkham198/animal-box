@@ -2,6 +2,13 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // ===============================================================
+    // Global Safety Net (Default Deny)
+    // ===============================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
     // Helper Functions
     // ===============================================================
     
@@ -20,22 +27,86 @@ service cloud.firestore {
     function isStaff() {
       return isAdmin() || 
              (isAuthenticated() && 
+              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'doctor', 'staff', 'vet']);
     }
 
     // ===============================================================
-    // Global Access Rules
+    // Collection-Specific Access Rules
     // ===============================================================
 
-    // For now, granting full transition access to the two admin accounts
-    // and staff as we stabilize the new database instance.
-    match /{document=**} {
-      allow read, write: if isStaff();
-    }
-    
     // Specifically protect the users collection to ensure admins can manage it
     match /users/{userId} {
       allow read, write: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
+    }
+
+    // Settings collection - allows anyone to read the public clinic profile
+    match /settings/{settingId} {
+      allow read: if settingId == 'clinic_profile' || isStaff();
+      allow write: if isStaff();
+    }
+
+    // Public bookings - anyone can create/submit booking requests, only staff can read/manage
+    match /public_bookings/{bookingId} {
+      allow create: if true;
+      allow read, update, delete: if isStaff();
+    }
+
+    // Pet Owners - anyone can search/view owners (needed for matching phone in public booking)
+    match /owners/{ownerId} {
+      allow read: if true;
+      allow write: if isStaff();
+    }
+
+    // Patients (Pets) - anyone can search/view patients (needed for matching pet in public booking)
+    match /patients/{patientId} {
+      allow read: if true;
+      allow write: if isStaff();
+    }
+
+    // Appointments - restricted to clinic staff
+    match /appointments/{appointmentId} {
+      allow read, write: if isStaff();
+    }
+
+    // Inventory - restricted to clinic staff
+    match /inventory/{itemId} {
+      allow read, write: if isStaff();
+    }
+
+    // Microchips - restricted to clinic staff
+    match /microchips/{chipId} {
+      allow read, write: if isStaff();
+    }
+
+    // OPD Records - restricted to clinic staff
+    match /opd_records/{recordId} {
+      allow read, write: if isStaff();
+    }
+
+    // IPD Records - restricted to clinic staff
+    match /ipd_records/{recordId} {
+      allow read, write: if isStaff();
+    }
+
+    // Expenses - restricted to clinic staff
+    match /expenses/{expenseId} {
+      allow read, write: if isStaff();
+    }
+
+    // Sales and billing - restricted to clinic staff
+    match /sales/{saleId} {
+      allow read, write: if isStaff();
+    }
+
+    // Pet accommodation rooms - restricted to clinic staff
+    match /pet_rooms/{roomId} {
+      allow read, write: if isStaff();
+    }
+
+    // Room bookings - restricted to clinic staff
+    match /room_bookings/{bookingId} {
+      allow read, write: if isStaff();
     }
   }
 }

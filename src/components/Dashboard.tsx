@@ -32,7 +32,13 @@ import {
   X,
   Stethoscope,
   Syringe,
-  History
+  History,
+  Bed,
+  Scissors,
+  Home,
+  Activity,
+  Search,
+  FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -49,7 +55,7 @@ import {
   Pie,
   Cell
 } from 'recharts';
-import { format, subDays, isSameDay, startOfDay } from 'date-fns';
+import { format, subDays, isSameDay, startOfDay, startOfMonth, endOfMonth, eachDayOfInterval } from 'date-fns';
 
 const COLORS = ['#00b4d8', '#48cae4', '#90e0ef', '#ade8f4', '#caf0f8'];
 import { cn } from '../lib/utils';
@@ -116,6 +122,7 @@ export default function Dashboard() {
   const [todaySchedule, setTodaySchedule] = useState<any[]>([]);
   const [revenueData, setRevenueData] = useState<any[]>([]);
   const [topDiagnoses, setTopDiagnoses] = useState<any[]>([]);
+  const [selectedTrend, setSelectedTrend] = useState<{ name: string; value: number; records: any[] } | null>(null);
   const [topMeds, setTopMeds] = useState<any[]>([]);
   const [uniquePatientsCount, setUniquePatientsCount] = useState(0);
   const [vaccinesCount, setVaccinesCount] = useState(0);
@@ -132,49 +139,356 @@ export default function Dashboard() {
   const [customUniquePatientIds, setCustomUniquePatientIds] = useState<string[]>([]);
   const [isCustomDateLoading, setIsCustomDateLoading] = useState(false);
 
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+
+  const [realtimeActive, setRealtimeActive] = useState({
+    opd: 0,
+    ipd: 0,
+    grooming: 0,
+    petCondo: 0,
+  });
+
+  useEffect(() => {
+    if (!isAuthReady || !user || (!isStaff && !isAdmin)) return;
+
+    let currentAllOpdDocs: any[] = [];
+    let currentAllIpdDocs: any[] = [];
+    let currentApptsDocs: any[] = [];
+    let currentPublicDocs: any[] = [];
+    let currentRoomDocs: any[] = [];
+
+    const recalculateOpdAndGrooming = () => {
+      const todayStr = format(new Date(), 'yyyy-MM-dd');
+
+      // GROOMING ACTIVE
+      const publicGroomingToday = currentPublicDocs.filter(b => {
+        const isBathing = ['bathing', 'grooming'].includes((b.serviceType || '').toLowerCase());
+        const isConfirmed = ['confirmed', 'pending'].includes((b.status || '').toLowerCase());
+        const isToday = b.requestedDate === todayStr;
+        return isBathing && isConfirmed && isToday;
+      });
+
+      const apptsGroomingToday = currentApptsDocs.filter(a => {
+        const act = (a.activities || '').toLowerCase();
+        const isGroom = act.includes('groom') || act.includes('bath') || act.includes('อาบน้ำ') || act.includes('ตัดขน') || act.includes('สปา') || act.includes('spa');
+        const isActive = a.status !== 'completed' && a.status !== 'cancelled';
+        let isToday = false;
+        if (a.startTime?.toDate) {
+          isToday = format(a.startTime.toDate(), 'yyyy-MM-dd') === todayStr;
+        } else if (a.requestedDate) {
+          isToday = a.requestedDate === todayStr;
+        } else {
+          isToday = true;
+        }
+        return isGroom && isActive && isToday;
+      });
+
+      const totalGroomingActive = publicGroomingToday.length + apptsGroomingToday.length;
+
+      // OPD ACTIVE
+      const inProgressOpdCount = currentAllOpdDocs.filter(d => d.status === 'In Progress').length;
+
+      const apptsTreatmentToday = currentApptsDocs.filter(a => {
+        const act = (a.activities || '').toLowerCase();
+        const isGroom = act.includes('groom') || act.includes('bath') || act.includes('อาบน้ำ') || act.includes('ตัดขน') || act.includes('สปา') || act.includes('spa');
+        const isActive = a.status !== 'completed' && a.status !== 'cancelled';
+        let isToday = false;
+        if (a.startTime?.toDate) {
+          isToday = format(a.startTime.toDate(), 'yyyy-MM-dd') === todayStr;
+        } else if (a.requestedDate) {
+          isToday = a.requestedDate === todayStr;
+        } else {
+          isToday = true;
+        }
+        return !isGroom && isActive && isToday;
+      });
+
+      const publicTreatmentToday = currentPublicDocs.filter(b => {
+        const isBathing = ['bathing', 'grooming'].includes((b.serviceType || '').toLowerCase());
+        const isConfirmed = ['confirmed', 'pending'].includes((b.status || '').toLowerCase());
+        const isToday = b.requestedDate === todayStr;
+        return !isBathing && isConfirmed && isToday;
+      });
+
+      const totalOpdActive = inProgressOpdCount + apptsTreatmentToday.length + publicTreatmentToday.length;
+
+      setRealtimeActive(prev => ({
+        ...prev,
+        opd: totalOpdActive,
+        grooming: totalGroomingActive
+      }));
+
+      // Calculate Daily Pet Visitors for every day of the selected month
+      const targetMonthStart = startOfMonth(new Date(selectedYear, selectedMonth, 1));
+      const targetMonthEnd = endOfMonth(new Date(selectedYear, selectedMonth, 1));
+      const daysInSelectedMonth = eachDayOfInterval({ start: targetMonthStart, end: targetMonthEnd });
+
+      const monthlyVisitors = daysInSelectedMonth.map((date) => {
+        const dateStr = format(date, 'yyyy-MM-dd');
+
+        const dayOpds = currentAllOpdDocs.filter(o => {
+          const d = o.dateVisit?.toDate ? o.dateVisit.toDate() : (o.dateVisit ? new Date(o.dateVisit) : null);
+          return d && isSameDay(d, date);
+        });
+
+        const dayIpds = currentAllIpdDocs.filter(iDoc => {
+          const d = iDoc.dateAdmit?.toDate ? iDoc.dateAdmit.toDate() : (iDoc.dateAdmit ? new Date(iDoc.dateAdmit) : null);
+          return d && isSameDay(d, date);
+        });
+
+        const dayAppts = currentApptsDocs.filter(a => {
+          if (a.status === 'cancelled') return false;
+          const d = a.startTime?.toDate ? a.startTime.toDate() : (a.startTime ? new Date(a.startTime) : null);
+          return d && isSameDay(d, date);
+        });
+
+        const dayPublics = currentPublicDocs.filter(b => {
+          if (b.status === 'cancelled') return false;
+          return b.requestedDate === dateStr;
+        });
+
+        const opdSet = new Set<string>();
+        const ipdSet = new Set<string>();
+        const groomingSet = new Set<string>();
+        const condoSet = new Set<string>();
+        const totalPetSet = new Set<string>();
+
+        dayOpds.forEach(o => {
+          const key = (o.patientId || o.petName || '').toLowerCase().trim();
+          if (key) {
+            totalPetSet.add(key);
+            opdSet.add(key);
+          }
+        });
+
+        dayIpds.forEach(iDoc => {
+          const key = (iDoc.patientId || iDoc.petName || '').toLowerCase().trim();
+          if (key) {
+            totalPetSet.add(key);
+            ipdSet.add(key);
+          }
+        });
+
+        dayAppts.forEach(a => {
+          const key = (a.patientName || a.patientId || '').toLowerCase().trim();
+          if (!key) return;
+          totalPetSet.add(key);
+          const act = (a.activities || '').toLowerCase();
+          const isGroom = act.includes('groom') || act.includes('bath') || act.includes('อาบน้ำ') || act.includes('ตัดขน') || act.includes('สปา') || act.includes('spa');
+          if (isGroom) {
+            groomingSet.add(key);
+          } else {
+            opdSet.add(key);
+          }
+        });
+
+        dayPublics.forEach(b => {
+          const key = (b.petName || '').toLowerCase().trim();
+          if (!key) return;
+          totalPetSet.add(key);
+          const st = (b.serviceType || '').toLowerCase();
+          if (['bathing', 'grooming'].includes(st)) {
+            groomingSet.add(key);
+          } else if (['hotel', 'boarding', 'condo', 'petcondo'].includes(st)) {
+            condoSet.add(key);
+          } else {
+            opdSet.add(key);
+          }
+        });
+
+        currentRoomDocs.forEach(r => {
+          if (r.status === 'occupied' || r.currentBooking) {
+            const cb = r.currentBooking;
+            const petName = cb?.petName || r.petName;
+            if (petName) {
+              const key = petName.toLowerCase().trim();
+              let isOccupiedOnDate = false;
+              if (cb?.checkIn && cb?.checkOut) {
+                const cIn = new Date(cb.checkIn);
+                const cOut = new Date(cb.checkOut);
+                isOccupiedOnDate = date >= cIn && date <= cOut;
+              } else if (isSameDay(date, new Date()) && r.status === 'occupied') {
+                isOccupiedOnDate = true;
+              }
+              if (isOccupiedOnDate) {
+                totalPetSet.add(key);
+                condoSet.add(key);
+              }
+            }
+          }
+        });
+
+        return {
+          name: format(date, 'd'),
+          fullDate: format(date, 'dd/MM/yyyy'),
+          count: totalPetSet.size,
+          opd: opdSet.size,
+          ipd: ipdSet.size,
+          grooming: groomingSet.size,
+          petCondo: condoSet.size
+        };
+      });
+
+      setRevenueData(monthlyVisitors);
+    };
+
+    // 1. IPD Active Listener
+    const unsubIpd = onSnapshot(collection(db, 'ipd_records'), (snap) => {
+      currentAllIpdDocs = snap.docs.map(d => d.data());
+      const activeIpd = snap.docs.filter(d => {
+        const status = d.data().status;
+        return status && status !== 'Discharged';
+      }).length;
+      setRealtimeActive(prev => ({ ...prev, ipd: activeIpd }));
+      recalculateOpdAndGrooming();
+    }, (err) => console.warn("IPD realtime listener warning:", err));
+
+    // 2. Pet Rooms Active Listener
+    const unsubRooms = onSnapshot(collection(db, 'pet_rooms'), (snapRooms) => {
+      currentRoomDocs = snapRooms.docs.map(d => d.data());
+      const occupiedRooms = snapRooms.docs.filter(d => d.data().status === 'occupied').length;
+      setRealtimeActive(prev => ({ ...prev, petCondo: occupiedRooms }));
+      recalculateOpdAndGrooming();
+    }, (err) => console.warn("Pet rooms realtime listener warning:", err));
+
+    // 3. OPD Records Listener
+    const unsubOpdRecords = onSnapshot(collection(db, 'opd_records'), (snap) => {
+      currentAllOpdDocs = snap.docs.map(d => d.data());
+      recalculateOpdAndGrooming();
+    }, (err) => console.warn("OPD records realtime listener warning:", err));
+
+    // 4. Appointments Listener
+    const unsubAppointments = onSnapshot(collection(db, 'appointments'), (snap) => {
+      currentApptsDocs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      recalculateOpdAndGrooming();
+    }, (err) => console.warn("Appointments realtime listener warning:", err));
+
+    // 5. Public Bookings Listener
+    const unsubPublicBookings = onSnapshot(collection(db, 'public_bookings'), (snap) => {
+      currentPublicDocs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      recalculateOpdAndGrooming();
+    }, (err) => console.warn("Public bookings realtime listener warning:", err));
+
+    return () => {
+      unsubIpd();
+      unsubRooms();
+      unsubOpdRecords();
+      unsubAppointments();
+      unsubPublicBookings();
+    };
+  }, [isAuthReady, user, isStaff, isAdmin, selectedMonth, selectedYear]);
+
   const [selectedTimelinePatient, setSelectedTimelinePatient] = useState<any | null>(null);
   const [patientTimelineData, setPatientTimelineData] = useState<any[]>([]);
   const [isPatientTimelineLoading, setIsPatientTimelineLoading] = useState(false);
+  const [selectedTimelineDetailItem, setSelectedTimelineDetailItem] = useState<any | null>(null);
 
-  const fetchPatientTimeline = async (patientId: string) => {
+  const safeFormatDate = (rawDate: any, formatStr: string, fallback = '-') => {
+    if (!rawDate) return fallback;
+    try {
+      let d: Date;
+      if (typeof rawDate?.toDate === 'function') {
+        d = rawDate.toDate();
+      } else if (rawDate?.seconds !== undefined) {
+        d = new Date(rawDate.seconds * 1000);
+      } else if (rawDate instanceof Date) {
+        d = rawDate;
+      } else {
+        d = new Date(rawDate);
+      }
+      if (isNaN(d.getTime())) return fallback;
+      return format(d, formatStr);
+    } catch (e) {
+      return fallback;
+    }
+  };
+
+  const fetchPatientTimeline = async (patientId?: string, targetHn?: string) => {
     setIsPatientTimelineLoading(true);
     setPatientTimelineData([]);
     try {
-      const opdQ = query(collection(db, 'opd_records'), where('patientId', '==', patientId), orderBy('dateVisit', 'desc'));
-      const ipdQ = query(collection(db, 'ipd_records'), where('patientId', '==', patientId), orderBy('dateAdmit', 'desc'));
+      let opdDocs: any[] = [];
+      let ipdDocs: any[] = [];
+
+      if (patientId && !patientId.startsWith('temp-')) {
+        const opdQ = query(collection(db, 'opd_records'), where('patientId', '==', patientId));
+        const ipdQ = query(collection(db, 'ipd_records'), where('patientId', '==', patientId));
+        
+        const [opdSnap, ipdSnap] = await Promise.all([
+          getDocs(opdQ).catch(e => { console.warn("OPD fetch failed", e); return { docs: [] } as any; }),
+          getDocs(ipdQ).catch(e => { console.warn("IPD fetch failed", e); return { docs: [] } as any; })
+        ]);
+        opdDocs = opdSnap?.docs || [];
+        ipdDocs = ipdSnap?.docs || [];
+      }
+
+      if (opdDocs.length === 0 && ipdDocs.length === 0 && targetHn && targetHn !== '-') {
+        const opdHnQ = query(collection(db, 'opd_records'), where('patientHn', '==', targetHn));
+        const ipdHnQ = query(collection(db, 'ipd_records'), where('patientHn', '==', targetHn));
+        
+        const [opdSnap2, ipdSnap2] = await Promise.all([
+          getDocs(opdHnQ).catch(e => { console.warn("OPD HN fetch failed", e); return { docs: [] } as any; }),
+          getDocs(ipdHnQ).catch(e => { console.warn("IPD HN fetch failed", e); return { docs: [] } as any; })
+        ]);
+        opdDocs = opdSnap2?.docs || [];
+        ipdDocs = ipdSnap2?.docs || [];
+      }
+
+      const opdItems = opdDocs.map((doc: any) => {
+        const d = doc.data();
+        return { 
+          id: doc.id, 
+          type: 'OPD', 
+          date: d.dateVisit, 
+          title: d.category || 'OPD Treatment',
+          description: d.finalDiagnosis || d.symptoms || d.treatmentPlan || '-',
+          diagnosis: d.finalDiagnosis || d.diagnosis || d.category || 'OPD Treatment',
+          symptoms: d.symptoms || '-',
+          treatmentPlan: d.treatmentPlan || d.treatmentNote || '-',
+          vitals: d.vitals || { weight: d.weight, temp: d.temperature, hr: d.heartRate, rr: d.respRate },
+          vetName: d.vetName || d.vet || '-',
+          medications: d.medications || d.items || [],
+          items: d.items || [],
+          rawData: d
+        };
+      });
       
-      const [opdSnap, ipdSnap] = await Promise.all([
-        getDocs(opdQ).catch(e => { console.warn("OPD fetch failed", e); return { docs: [] } as any; }),
-        getDocs(ipdQ).catch(e => { console.warn("IPD fetch failed", e); return { docs: [] } as any; })
-      ]);
-      
-      const opdItems = (opdSnap?.docs || []).map((doc: any) => ({ 
-        id: doc.id, 
-        type: 'OPD', 
-        date: doc.data().dateVisit, 
-        title: doc.data().category || 'OPD Treatment',
-        description: doc.data().finalDiagnosis || doc.data().symptoms,
-        items: doc.data().items || []
-      }));
-      
-      const ipdItems = (ipdSnap?.docs || []).map((doc: any) => ({ 
-        id: doc.id, 
-        type: 'IPD', 
-        date: doc.data().dateAdmit, 
-        title: 'IPD Admit (รับแอดมิท)',
-        description: doc.data().diagnosis,
-        status: doc.data().status
-      }));
+      const ipdItems = ipdDocs.map((doc: any) => {
+        const d = doc.data();
+        return { 
+          id: doc.id, 
+          type: 'IPD', 
+          date: d.dateAdmit, 
+          title: 'IPD Admit (รับแอดมิท)',
+          description: d.diagnosis || d.symptoms || '-',
+          diagnosis: d.diagnosis || 'IPD Record',
+          symptoms: d.symptoms || '-',
+          treatmentPlan: d.activeTreatmentPlan || d.treatmentPlan || '-',
+          vitals: d.vitals || { weight: d.weight, temp: d.temperature, hr: d.heartRate, rr: d.respRate },
+          vetName: d.vetName || d.vet || '-',
+          status: d.status,
+          medications: d.medications || d.items || [],
+          items: d.items || [],
+          rawData: d
+        };
+      });
 
       const combined = [...opdItems, ...ipdItems].sort((a, b) => {
-        const dateA = a.date?.toDate ? a.date.toDate().getTime() : 0;
-        const dateB = b.date?.toDate ? b.date.toDate().getTime() : 0;
-        return dateB - dateA;
+        const getTime = (d: any) => {
+          if (!d) return 0;
+          if (typeof d.toDate === 'function') return d.toDate().getTime();
+          if (d.seconds !== undefined) return d.seconds * 1000;
+          const parsed = new Date(d).getTime();
+          return isNaN(parsed) ? 0 : parsed;
+        };
+        return getTime(b.date) - getTime(a.date);
       });
 
       setPatientTimelineData(combined);
     } catch (err) {
       console.warn("Timeline fetch error:", err);
+      setPatientTimelineData([]);
     } finally {
       setIsPatientTimelineLoading(false);
     }
@@ -182,12 +496,9 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (selectedTimelinePatient) {
-      fetchPatientTimeline(selectedTimelinePatient.id);
+      fetchPatientTimeline(selectedTimelinePatient.id, selectedTimelinePatient.hn);
     }
   }, [selectedTimelinePatient]);
-
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
   useEffect(() => {
     if (!isAuthReady || !user) return;
@@ -230,17 +541,23 @@ export default function Dashboard() {
         });
         setVaccinesCount(vCount);
 
-        // Update Diagnoses
-        const diagMap: Record<string, number> = {};
+        // Update Diagnoses & Health Trends
+        const diagMap: Record<string, { count: number; records: any[] }> = {};
         opds.forEach((o: any) => {
-          if (o.finalDiagnosis) {
-            diagMap[o.finalDiagnosis] = (diagMap[o.finalDiagnosis] || 0) + 1;
+          const diagName = o.finalDiagnosis || o.chiefComplaint || (o.items?.[0]?.name ? `บริการ: ${o.items[0].name}` : null);
+          if (diagName) {
+            const cleanName = diagName.trim();
+            if (!diagMap[cleanName]) {
+              diagMap[cleanName] = { count: 0, records: [] };
+            }
+            diagMap[cleanName].count += 1;
+            diagMap[cleanName].records.push(o);
           }
         });
         const diags = Object.entries(diagMap)
-          .map(([name, value]) => ({ name, value }))
+          .map(([name, data]) => ({ name, value: data.count, records: data.records }))
           .sort((a, b) => b.value - a.value)
-          .slice(0, 5);
+          .slice(0, 8);
         setTopDiagnoses(diags);
 
         // Update Meds
@@ -468,36 +785,40 @@ export default function Dashboard() {
 
   const statCards = [
     { 
-      label: 'Total Patients', 
-      value: stats.totalPatients, 
-      icon: Users, 
-      color: 'bg-blue-500', 
-      trend: `${stats.totalPatientsTrend >= 0 ? '+' : ''}${stats.totalPatientsTrend.toFixed(1)}%`, 
-      isUp: stats.totalPatientsTrend >= 0 
+      label: 'OPD Active Cases', 
+      value: realtimeActive.opd, 
+      icon: Stethoscope, 
+      color: 'bg-sky-500', 
+      trend: 'Real-time', 
+      isUp: true,
+      description: 'เคส OPD ที่กำลังรักษา/รอตรวจ'
     },
     { 
-      label: "Today's Appts", 
-      value: stats.todayAppointments, 
-      icon: Calendar, 
+      label: 'IPD Admitted', 
+      value: realtimeActive.ipd, 
+      icon: Bed, 
       color: 'bg-indigo-500', 
-      trend: `${stats.todayAppointmentsTrend.toFixed(0)}% Done`, 
-      isUp: stats.todayAppointmentsTrend >= 50 
+      trend: 'Real-time', 
+      isUp: true,
+      description: 'ผู้ป่วยครองเตียงแอดมิทปัจจุบัน'
     },
     { 
-      label: 'Low Stock Alerts', 
-      value: stats.lowStockItems, 
-      icon: AlertTriangle, 
+      label: 'Grooming Active', 
+      value: realtimeActive.grooming, 
+      icon: Scissors, 
+      color: 'bg-rose-500', 
+      trend: 'Real-time', 
+      isUp: true,
+      description: 'คิวอาบน้ำ/ตัดขนที่ยังไม่เสร็จ'
+    },
+    { 
+      label: 'Pet Condo Occupied', 
+      value: realtimeActive.petCondo, 
+      icon: Home, 
       color: 'bg-amber-500', 
-      trend: `${stats.lowStockTrend.toFixed(0)}% of Items`, 
-      isUp: stats.lowStockTrend <= 20 
-    },
-    { 
-      label: 'Monthly Revenue', 
-      value: `฿${stats.monthlyRevenue.toLocaleString()}`, 
-      icon: TrendingUp, 
-      color: 'bg-emerald-500', 
-      trend: `${stats.monthlyRevenueTrend >= 0 ? '+' : ''}${stats.monthlyRevenueTrend.toFixed(1)}%`, 
-      isUp: stats.monthlyRevenueTrend >= 0 
+      trend: 'Real-time', 
+      isUp: true,
+      description: 'ห้องพักฝากเลี้ยงที่มีสัตว์เข้าพัก'
     },
   ];
 
@@ -528,6 +849,7 @@ export default function Dashboard() {
             color={stat.color}
             trend={stat.trend}
             isUp={stat.isUp}
+            description={stat.description}
             delay={i * 0.1}
           />
         ))}
@@ -538,15 +860,108 @@ export default function Dashboard() {
         <div className="lg:col-span-2 bg-white rounded-3xl shadow-sm border border-slate-100 p-8">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <div className="md:col-span-2">
-              <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-8">Revenue Insights</h3>
+              <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+                <div>
+                  <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Daily Pet Visitors</h3>
+                  <p className="text-[11px] text-slate-400 font-medium">
+                    จำนวนสัตว์ที่เข้ามารับบริการรายวัน ({format(new Date(selectedYear, selectedMonth, 1), 'MMM yyyy')})
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1">
+                    <select 
+                      value={selectedMonth}
+                      onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
+                      className="text-[10px] font-black uppercase tracking-widest bg-transparent border-none outline-none focus:ring-0 text-slate-700 cursor-pointer"
+                    >
+                      {Array.from({ length: 12 }).map((_, i) => (
+                        <option key={`dash-opt-m-${i}`} value={i}>{format(new Date(2024, i, 1), 'MMM')}</option>
+                      ))}
+                    </select>
+                    <select 
+                      value={selectedYear}
+                      onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+                      className="text-[10px] font-black uppercase tracking-widest bg-transparent border-none outline-none focus:ring-0 text-slate-700 cursor-pointer"
+                    >
+                      {Array.from({ length: 3 }).map((_, i) => {
+                        const year = new Date().getFullYear() - 1 + i;
+                        return <option key={`dash-opt-y-${year}-${i}`} value={year}>{year}</option>;
+                      })}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-1.5 bg-sky-50 px-3 py-1.5 rounded-xl border border-sky-100 shrink-0">
+                    <PawPrint className="w-3.5 h-3.5 text-sky-500" />
+                    <span className="text-xs font-black text-sky-700">
+                      {selectedMonth === new Date().getMonth() && selectedYear === new Date().getFullYear() ? (
+                        <>วันนี้: {revenueData.find(d => d.fullDate === format(new Date(), 'dd/MM/yyyy'))?.count || 0} ตัว</>
+                      ) : (
+                        <>รวมเดือนนี้: {revenueData.reduce((acc, curr) => acc + (curr.count || 0), 0)} ตัว</>
+                      )}
+                    </span>
+                  </div>
+                </div>
+              </div>
               <div className="h-[250px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={revenueData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} />
-                    <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
-                    <Area type="monotone" dataKey="revenue" stroke="#00b4d8" strokeWidth={3} fill="#00b4d8" fillOpacity={0.1} />
+                    <XAxis 
+                      dataKey="name" 
+                      axisLine={false} 
+                      tickLine={false} 
+                      interval="preserveStartEnd"
+                      tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} 
+                    />
+                    <YAxis axisLine={false} tickLine={false} allowDecimals={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} />
+                    <Tooltip 
+                      content={({ active, payload }: any) => {
+                        if (active && payload && payload.length) {
+                          const data = payload[0].payload;
+                          return (
+                            <div className="bg-white/95 backdrop-blur-md p-3.5 rounded-2xl shadow-xl border border-slate-100 min-w-[210px] text-xs space-y-2 z-50">
+                              <div className="font-black text-slate-800 text-xs border-b border-slate-100 pb-2 flex items-center justify-between">
+                                <span>วันที่ {data.fullDate}</span>
+                                <span className="text-sky-600 font-bold bg-sky-50 px-2 py-0.5 rounded-lg border border-sky-100">
+                                  รวม {data.count} ตัว
+                                </span>
+                              </div>
+                              <div className="space-y-1.5 font-medium pt-0.5">
+                                <div className="flex items-center justify-between text-slate-600">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="w-2 h-2 rounded-full bg-sky-500"></span>
+                                    OPD (ตรวจรักษา):
+                                  </span>
+                                  <span className="font-black text-slate-800">{data.opd || 0} ตัว</span>
+                                </div>
+                                <div className="flex items-center justify-between text-slate-600">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                                    IPD (ผู้ป่วยใน):
+                                  </span>
+                                  <span className="font-black text-slate-800">{data.ipd || 0} ตัว</span>
+                                </div>
+                                <div className="flex items-center justify-between text-slate-600">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                                    Grooming (อาบน้ำ/ตัดขน):
+                                  </span>
+                                  <span className="font-black text-slate-800">{data.grooming || 0} ตัว</span>
+                                </div>
+                                <div className="flex items-center justify-between text-slate-600">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                                    Pet Condo (ฝากเลี้ยง):
+                                  </span>
+                                  <span className="font-black text-slate-800">{data.petCondo || 0} ตัว</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Area type="monotone" dataKey="count" stroke="#00b4d8" strokeWidth={3} fill="#00b4d8" fillOpacity={0.15} />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -607,7 +1022,7 @@ export default function Dashboard() {
                 className="text-[10px] font-black uppercase tracking-widest bg-slate-50 border-none rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-sky-400"
               >
                 {Array.from({ length: 12 }).map((_, i) => (
-                  <option key={i} value={i}>{format(new Date(2024, i, 1), 'MMM')}</option>
+                  <option key={`trend-month-${i}`} value={i}>{format(new Date(2024, i, 1), 'MMM')}</option>
                 ))}
               </select>
               <select 
@@ -617,23 +1032,60 @@ export default function Dashboard() {
               >
                 {Array.from({ length: 3 }).map((_, i) => {
                   const year = new Date().getFullYear() - 1 + i;
-                  return <option key={year} value={year}>{year}</option>;
+                  return <option key={`trend-year-${year}`} value={year}>{year}</option>;
                 })}
               </select>
             </div>
           </div>
-          <div className="space-y-6">
-            {topDiagnoses.map((diag, i) => (
-              <div key={i} className="space-y-2">
-                <div className="flex items-center justify-between text-xs font-bold">
-                  <span className="text-slate-600 truncate">{diag.name}</span>
-                  <span className="text-slate-400">{diag.value}</span>
-                </div>
-                <div className="h-2 bg-slate-50 rounded-full overflow-hidden">
-                  <div className="h-full bg-[#00b4d8]" style={{ width: `${(diag.value / (topDiagnoses[0]?.value || 1)) * 100}%` }} />
-                </div>
+          <div className="space-y-4 max-h-[380px] overflow-y-auto pr-1 custom-scrollbar">
+            {topDiagnoses.length === 0 ? (
+              <div className="text-center py-10 text-slate-400 text-xs font-medium">
+                ไม่มีข้อมูล Health Trends ในช่วงเดือนนี้
               </div>
-            ))}
+            ) : (
+              topDiagnoses.map((diag, i) => (
+                <div 
+                  key={`top-diag-${diag.name}-${i}`} 
+                  onClick={() => setSelectedTrend(diag)}
+                  className="p-3 bg-slate-50 hover:bg-sky-50/80 border border-slate-100 hover:border-sky-200 rounded-2xl cursor-pointer transition-all space-y-2 group shadow-2xs"
+                  title="คลิกเพื่อดูประวัติสัตว์ป่วยย้อนหลัง"
+                >
+                  <div className="flex items-center justify-between text-xs font-bold gap-3">
+                    <div className="flex-1 overflow-hidden relative min-w-0">
+                      {diag.name.length > 28 ? (
+                        <div className="overflow-hidden whitespace-nowrap relative">
+                          <div className="inline-flex animate-marquee group-hover:[animation-play-state:paused] whitespace-nowrap">
+                            <span className="text-slate-700 font-bold pr-8">{diag.name}</span>
+                            <span className="text-slate-700 font-bold pr-8">{diag.name}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-slate-700 font-bold block truncate">{diag.name}</span>
+                      )}
+                    </div>
+                    <span className="text-sky-600 bg-white px-2 py-0.5 rounded-lg border border-slate-200 text-[11px] font-mono font-black shrink-0 shadow-2xs">
+                      {diag.value} ราย
+                    </span>
+                  </div>
+
+                  <div className="h-2 bg-slate-200/60 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-[#00b4d8] rounded-full transition-all duration-500" 
+                      style={{ width: `${Math.max(10, (diag.value / (topDiagnoses[0]?.value || 1)) * 100)}%` }} 
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium pt-0.5">
+                    <span className="group-hover:text-sky-600 flex items-center gap-1 transition-colors font-semibold">
+                      <Search className="w-3 h-3 text-sky-500" /> คลิกดูสัตว์ป่วย ({diag.records?.length || diag.value} ตัว)
+                    </span>
+                    <span className="text-slate-400 font-mono font-bold">
+                      {((diag.value / (topDiagnoses.reduce((acc: number, d: any) => acc + d.value, 0) || 1)) * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>
@@ -786,7 +1238,7 @@ export default function Dashboard() {
 
       <AnimatePresence>
         {showStockModal && outOfStockItems.length > 0 && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 text-left">
+          <div key="modal-wrapper-stock" className="fixed inset-0 z-[100] flex items-center justify-center p-6 text-left">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -869,7 +1321,7 @@ export default function Dashboard() {
         )}
 
         {showUniquePetsModal && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 text-left">
+          <div key="modal-wrapper-unique-pets" className="fixed inset-0 z-[120] flex items-center justify-center p-4 text-left">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -1126,13 +1578,12 @@ export default function Dashboard() {
       {/* Patient History Timeline Sub-Modal */}
       <AnimatePresence>
         {selectedTimelinePatient && (
-          <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+          <div key={`modal-wrapper-timeline-patient-${selectedTimelinePatient.id || 'pt'}`} className="fixed inset-0 z-[130] flex items-center justify-center p-4">
             {/* Backdrop with blur styling */}
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setSelectedTimelinePatient(null)}
               className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
             />
 
@@ -1204,60 +1655,78 @@ export default function Dashboard() {
                     <p className="text-xs font-black text-slate-400 uppercase tracking-widest">กำลังดึงข้อมูลประวัติ...</p>
                   </div>
                 ) : patientTimelineData.length > 0 ? (
-                  <div className="space-y-8 relative before:absolute before:left-[19px] before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-100">
+                  <div className="space-y-6 relative before:absolute before:left-[31px] before:top-4 before:bottom-4 before:w-[3px] before:bg-gradient-to-b before:from-amber-400 before:via-sky-400 before:to-indigo-500 before:rounded-full before:opacity-70">
                     {patientTimelineData.map((item, i) => {
                       const isOPD = item.type === 'OPD';
-                      const formattedDate = item.date?.toDate 
-                        ? format(item.date.toDate(), 'dd MMM yyyy HH:mm') 
-                        : 'N/A';
+                      const monthStr = safeFormatDate(item.date, 'MMM', '-').toUpperCase();
+                      const dayStr = safeFormatDate(item.date, 'dd', '-');
+                      const yearStr = safeFormatDate(item.date, 'yyyy', '-');
+                      const timeStr = safeFormatDate(item.date, 'HH:mm', '-');
+
+                      const ringColor = isOPD ? 'border-amber-400 text-amber-500 shadow-amber-500/20' : 'border-sky-400 text-sky-500 shadow-sky-500/20';
+                      const bulletBg = isOPD ? 'bg-amber-400' : 'bg-sky-500';
 
                       return (
-                        <div key={`timeline-item-${item.id}-${i}`} className="relative pl-12">
-                          {/* Dot / Icon container */}
+                        <div key={`dash-timeline-${item.type}-${item.id || 'no-id'}-${i}`} className="relative flex items-center gap-4 group">
+                          {/* Circular Date Badge (Matches Image 1) */}
                           <div className={cn(
-                            "absolute left-0 top-0.5 w-10 h-10 rounded-xl flex items-center justify-center z-10 shadow-xs border border-white transition-all",
-                            isOPD ? "bg-sky-50 text-sky-500 border-sky-100" : "bg-amber-50 text-amber-500 border-amber-100"
+                            "relative z-10 w-16 h-16 rounded-full bg-white border-[3.5px] flex flex-col items-center justify-center shrink-0 shadow-md transition-transform group-hover:scale-105",
+                            ringColor
                           )}>
-                            {isOPD ? (
-                              <Stethoscope className="w-5 h-5" />
-                            ) : (
-                              <PawPrint className="w-5 h-5" />
-                            )}
+                            <span className="text-[10px] font-black uppercase tracking-wider leading-none">
+                              {monthStr}
+                            </span>
+                            <span className="text-lg font-black text-slate-900 leading-none my-0.5">
+                              {dayStr}
+                            </span>
+                            <span className="text-[9px] font-bold text-slate-400 leading-none">
+                              {yearStr}
+                            </span>
                           </div>
 
-                          {/* Card Content */}
-                          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-xs space-y-2.5 hover:border-slate-200 hover:shadow-md transition-all duration-200">
+                          {/* Horizontal connector line */}
+                          <div className="w-3 h-[2px] bg-slate-300 shrink-0" />
+
+                          {/* Card Content Pill Container */}
+                          <div 
+                            onClick={() => setSelectedTimelineDetailItem(item)}
+                            className="flex-1 bg-white p-5 rounded-[24px] border border-slate-200/80 hover:border-amber-400 shadow-sm hover:shadow-xl transition-all duration-200 space-y-2.5 cursor-pointer group/card active:scale-[0.99]"
+                            title="คลิกเพื่อดูรายละเอียดเวชระเบียน"
+                          >
                             <div className="flex items-center justify-between gap-2 flex-wrap">
-                              <span className={cn(
-                                "px-2 py-0.5 rounded-md text-[9px] font-black tracking-widest uppercase",
-                                isOPD ? "bg-sky-50 text-sky-600" : "bg-amber-50 text-amber-600"
-                              )}>
-                                {isOPD ? 'ตรวจรักษา (OPD)' : 'แอดมิท (IPD)'}
-                              </span>
-                              <span className="text-[10px] font-bold text-slate-405 font-mono">
-                                {formattedDate}
+                              <div className="flex items-center gap-2">
+                                <span className={cn("w-2.5 h-2.5 rounded-full shrink-0 animate-pulse", bulletBg)} />
+                                <span className={cn(
+                                  "px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-widest uppercase",
+                                  isOPD ? "bg-amber-50 text-amber-700 border border-amber-200" : "bg-sky-50 text-sky-700 border border-sky-200"
+                                )}>
+                                  {isOPD ? 'MEDICAL NOTE (OPD)' : 'IPD ADMIT RECORD'}
+                                </span>
+                              </div>
+                              <span className="text-[11px] font-bold text-slate-400 font-mono">
+                                เวลา {timeStr} น.
                               </span>
                             </div>
 
-                            <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">
+                            <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight group-hover/card:text-sky-600 transition-colors">
                               {item.title}
                             </h4>
                             
                             {item.description ? (
-                              <p className="text-xs text-slate-500 font-medium leading-relaxed bg-slate-50/50 p-3 rounded-xl border border-slate-100/50">
+                              <p className="text-xs text-slate-600 font-medium leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">
                                 {item.description}
                               </p>
                             ) : (
-                              <p className="text-xs text-slate-450 italic">ไม่มีข้อมูลแสดงรายละเอียดการรักษา</p>
+                              <p className="text-xs text-slate-400 italic">ไม่มีข้อมูลแสดงรายละเอียดการรักษา</p>
                             )}
 
                             {/* Medications / Items prescribed */}
                             {item.items && item.items.length > 0 && (
-                              <div className="pt-2.5 border-t border-slate-50 flex flex-wrap gap-1.5">
+                              <div className="pt-2 border-t border-slate-100 flex flex-wrap gap-1.5">
                                 {item.items.map((it: any, idx: number) => (
                                   <span 
                                     key={`timeline-item-unit-${idx}`} 
-                                    className="px-2 py-1 bg-slate-50 text-slate-600 text-[10px] font-bold rounded-lg border border-slate-100 inline-flex items-center gap-1 shadow-2xs"
+                                    className="px-2 py-1 bg-slate-50 text-slate-700 text-[10px] font-bold rounded-lg border border-slate-200 inline-flex items-center gap-1 shadow-2xs"
                                   >
                                     <Package className="w-3 h-3 text-slate-400" />
                                     {it.name} <span className="text-slate-400 font-bold">x{it.quantity}</span>
@@ -1265,6 +1734,14 @@ export default function Dashboard() {
                                 ))}
                               </div>
                             )}
+
+                            {/* Bottom Action Hint */}
+                            <div className="flex items-center justify-between text-[11px] text-slate-400 font-medium pt-2 border-t border-slate-100">
+                              <span className="text-sky-600 font-bold flex items-center gap-1 group-hover/card:underline">
+                                <Search className="w-3.5 h-3.5" /> คลิกดูรายละเอียดเวชระเบียน
+                              </span>
+                              <FileText className="w-4 h-4 text-slate-300 group-hover/card:text-sky-500 transition-colors shrink-0" />
+                            </div>
                           </div>
                         </div>
                       );
@@ -1288,6 +1765,263 @@ export default function Dashboard() {
                   className="px-5 py-2.5 bg-slate-900 hover:bg-black text-white rounded-xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 shadow-md shadow-slate-200"
                 >
                   ปิดหน้าต่าง (Close)
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Selected Timeline Detail Item Sub-Modal */}
+        <AnimatePresence>
+          {selectedTimelineDetailItem && (
+            <div key={`modal-wrapper-timeline-detail-${selectedTimelineDetailItem.id || 'dtl'}`} className="fixed inset-0 z-[160] flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setSelectedTimelineDetailItem(null)}
+                className="absolute inset-0 bg-slate-900/70 backdrop-blur-md"
+              />
+
+              <motion.div 
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-white w-full max-w-xl max-h-[85vh] rounded-3xl shadow-2xl border border-slate-100 flex flex-col overflow-hidden relative z-10"
+              >
+                {/* Detail Header */}
+                <div className="p-5 bg-slate-50 border-b border-slate-100 flex items-center justify-between gap-3 shrink-0">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={cn(
+                      "w-10 h-10 rounded-2xl flex items-center justify-center text-white shrink-0 shadow-md",
+                      selectedTimelineDetailItem.type === 'OPD' ? "bg-amber-500 shadow-amber-500/20" : "bg-sky-500 shadow-sky-500/20"
+                    )}>
+                      <History className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={cn(
+                          "px-2 py-0.5 rounded-md text-[9.5px] font-black uppercase tracking-wider border",
+                          selectedTimelineDetailItem.type === 'OPD' 
+                            ? "bg-amber-50 text-amber-700 border-amber-200" 
+                            : "bg-sky-50 text-sky-700 border-sky-200"
+                        )}>
+                          {selectedTimelineDetailItem.type} Record
+                        </span>
+                        <span className="text-slate-400 text-xs font-mono font-bold">
+                          {safeFormatDate(selectedTimelineDetailItem.date, 'dd/MM/yyyy HH:mm', '-')}
+                        </span>
+                      </div>
+                      <h3 className="text-base font-black text-slate-800 leading-tight truncate mt-0.5">
+                        {selectedTimelineDetailItem.diagnosis || selectedTimelineDetailItem.title}
+                      </h3>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setSelectedTimelineDetailItem(null)}
+                    className="w-8 h-8 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-slate-600 flex items-center justify-center transition-colors shrink-0 shadow-2xs"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Detail Content */}
+                <div className="p-6 overflow-y-auto space-y-5 flex-1 custom-scrollbar text-slate-700">
+                  {/* Symptoms / Chief Complaint */}
+                  <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-100 space-y-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">อาการสำคัญ / อาการที่พบ (Symptoms)</span>
+                    <p className="text-xs font-bold text-slate-800 leading-relaxed">
+                      {selectedTimelineDetailItem.symptoms || selectedTimelineDetailItem.description || '-'}
+                    </p>
+                  </div>
+
+                  {/* Vital Signs Grid */}
+                  {selectedTimelineDetailItem.vitals && (
+                    <div>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-2">สัญญาณชีพ (Vital Signs)</span>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        <div className="bg-sky-50/50 p-2.5 rounded-xl border border-sky-100 text-center">
+                          <span className="text-[9px] font-bold text-sky-600 block uppercase">น้ำหนัก</span>
+                          <span className="text-xs font-black text-slate-800 font-mono">{selectedTimelineDetailItem.vitals.weight || '-'} kg</span>
+                        </div>
+                        <div className="bg-rose-50/50 p-2.5 rounded-xl border border-rose-100 text-center">
+                          <span className="text-[9px] font-bold text-rose-600 block uppercase">อุณหภูมิ</span>
+                          <span className="text-xs font-black text-slate-800 font-mono">{selectedTimelineDetailItem.vitals.temp || '-'} °C</span>
+                        </div>
+                        <div className="bg-amber-50/50 p-2.5 rounded-xl border border-amber-100 text-center">
+                          <span className="text-[9px] font-bold text-amber-600 block uppercase">Heart Rate</span>
+                          <span className="text-xs font-black text-slate-800 font-mono">{selectedTimelineDetailItem.vitals.hr || selectedTimelineDetailItem.vitals.heartRate || '-'} bpm</span>
+                        </div>
+                        <div className="bg-emerald-50/50 p-2.5 rounded-xl border border-emerald-100 text-center">
+                          <span className="text-[9px] font-bold text-emerald-600 block uppercase">Resp Rate</span>
+                          <span className="text-xs font-black text-slate-800 font-mono">{selectedTimelineDetailItem.vitals.rr || selectedTimelineDetailItem.vitals.respRate || '-'} rpm</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Treatment Plan */}
+                  <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-100 space-y-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">แผนการรักษา & บันทึกแพทย์ (Treatment Plan)</span>
+                    <p className="text-xs font-medium text-slate-700 whitespace-pre-wrap leading-relaxed">
+                      {selectedTimelineDetailItem.treatmentPlan || selectedTimelineDetailItem.description || '-'}
+                    </p>
+                  </div>
+
+                  {/* Prescribed Medications */}
+                  {(selectedTimelineDetailItem.medications?.length > 0 || selectedTimelineDetailItem.items?.length > 0) && (
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">รายการยาที่สั่งจ่าย / เวชภัณฑ์ (Medications)</span>
+                      <div className="space-y-1.5">
+                        {(selectedTimelineDetailItem.medications || selectedTimelineDetailItem.items || []).map((m: any, mIdx: number) => (
+                          <div key={`dtl-med-${m.id || m.name || 'med'}-${mIdx}`} className="bg-slate-50 border border-slate-100 p-3 rounded-xl flex items-center justify-between text-xs">
+                            <div>
+                              <span className="font-extrabold text-slate-800 block">{m.name || m.drugName || 'ยา / เวชภัณฑ์'}</span>
+                              {m.instruction && <span className="text-[11px] text-slate-500 block mt-0.5">{m.instruction}</span>}
+                            </div>
+                            <span className="font-mono font-black text-sky-600 bg-white px-2 py-1 rounded-lg border border-slate-200 shrink-0">
+                              {m.quantity || m.qty || 1} {m.unit || 'ชิ้น'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Vet Name */}
+                  <div className="text-right text-xs text-slate-400 font-medium pt-2 border-t border-slate-100">
+                    ผู้บันทึก: <span className="font-bold text-slate-700">{selectedTimelineDetailItem.vetName || 'สัตวแพทย์'}</span>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end shrink-0">
+                  <button 
+                    onClick={() => setSelectedTimelineDetailItem(null)}
+                    className="px-5 py-2.5 bg-slate-900 hover:bg-black text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-all active:scale-95"
+                  >
+                    ปิด (Close)
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Selected Health Trend Detail Modal */}
+        {selectedTrend && (
+          <div key={`modal-wrapper-trend-${selectedTrend.name}`} className="fixed inset-0 z-[140] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedTrend(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white w-full max-w-2xl max-h-[85vh] rounded-3xl shadow-2xl border border-slate-100 flex flex-col overflow-hidden relative z-10"
+            >
+              {/* Modal Header */}
+              <div className="p-6 bg-slate-50 border-b border-slate-100 flex items-center justify-between gap-4 shrink-0">
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <div className="w-11 h-11 bg-sky-500 text-white rounded-2xl flex items-center justify-center shadow-md shadow-sky-500/20 shrink-0">
+                    <Activity className="w-6 h-6" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-sky-600 block">Health Trend Patients List</span>
+                    <h3 className="text-base font-black text-slate-800 leading-tight truncate">
+                      {selectedTrend.name}
+                    </h3>
+                    <p className="text-xs text-slate-400 font-medium mt-0.5">
+                      พบประวัติการรักษาทั้งหมด {selectedTrend.value} ราย ในเดือนนี้
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setSelectedTrend(null)}
+                  className="w-9 h-9 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-slate-600 flex items-center justify-center transition-colors shrink-0 shadow-2xs"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body - Patients List */}
+              <div className="p-6 overflow-y-auto space-y-3 flex-1 custom-scrollbar">
+                {selectedTrend.records && selectedTrend.records.length > 0 ? (
+                  selectedTrend.records.map((rec: any, idx: number) => {
+                    const matchedPatient = patientsMap[rec.patientId];
+                    const petName = matchedPatient?.name || rec.patientName || rec.petName || 'สัตว์ป่วย';
+                    const hn = matchedPatient?.hn || rec.hn || rec.patientHn || '-';
+                    const species = matchedPatient?.species || rec.species || rec.petSpecies || 'สัตว์เลี้ยง';
+                    const breed = matchedPatient?.breed || rec.breed || rec.petBreed || '-';
+                    const ownerName = matchedPatient?.ownerName || rec.ownerName || '-';
+                    const visitDate = safeFormatDate(rec.dateVisit, 'dd/MM/yyyy HH:mm', '-');
+
+                    return (
+                      <div key={`trend-rec-${rec.patientId || rec.hn || 'rec'}-${idx}`} className="bg-slate-50/70 hover:bg-white border border-slate-100 hover:border-sky-300 p-4 rounded-2xl transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:shadow-md">
+                        <div className="flex items-center gap-3.5 min-w-0">
+                          <div className="w-12 h-12 bg-sky-50 rounded-2xl flex items-center justify-center text-sky-600 border border-sky-100 shrink-0 font-black text-sm overflow-hidden">
+                            {matchedPatient?.photoURL ? (
+                              <img src={matchedPatient.photoURL} className="w-full h-full object-cover" alt={petName} />
+                            ) : (
+                              <PawPrint className="w-6 h-6 text-sky-500" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="font-extrabold text-slate-800 text-sm">{petName}</h4>
+                              <span className="bg-white text-sky-600 border border-sky-100 text-[10px] font-mono font-bold px-2 py-0.5 rounded-md shadow-2xs">
+                                HN: {hn}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500 font-medium mt-0.5">
+                              {species} ({breed}) • เจ้าของ: {ownerName}
+                            </p>
+                            <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400 font-mono">
+                              <span>วันที่เข้ารับบริการ: {visitDate}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            const targetPatient = matchedPatient || {
+                              id: rec.patientId || `temp-${idx}`,
+                              name: petName,
+                              hn: hn,
+                              species: species,
+                              breed: breed,
+                              ownerName: ownerName
+                            };
+                            setSelectedTrend(null);
+                            setSelectedTimelinePatient(targetPatient);
+                          }}
+                          className="bg-sky-500 hover:bg-sky-600 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 shrink-0 active:scale-95"
+                        >
+                          <History className="w-3.5 h-3.5" />
+                          ดูประวัติเวชระเบียน
+                        </button>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-center py-12 text-slate-400 text-xs font-medium">
+                    ไม่พบรายละเอียดสัตว์ป่วยสำหรับกลุ่ม Health Trend นี้
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end shrink-0">
+                <button 
+                  onClick={() => setSelectedTrend(null)}
+                  className="px-5 py-2.5 bg-slate-900 hover:bg-black text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-all active:scale-95"
+                >
+                  ปิด (Close)
                 </button>
               </div>
             </motion.div>

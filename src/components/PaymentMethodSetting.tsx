@@ -74,7 +74,7 @@ export default function PaymentMethodSetting() {
             </thead>
             <tbody className="divide-y divide-slate-50">
               {methods.map((method, index) => (
-                <tr key={method.id} className="hover:bg-slate-50/50 transition-colors group">
+                <tr key={`pay-method-${method.id || 'm'}-${index}`} className="hover:bg-slate-50/50 transition-colors group">
                   <td className="px-6 py-4 text-center font-medium text-slate-500">{index + 1}</td>
                   <td className="px-6 py-4">
                     <div className="font-bold text-slate-700">{method.type}</div>

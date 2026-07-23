@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Bell, Settings, Package, Calendar, Clock, X, PawPrint } from 'lucide-react';
+import { Search, Bell, Settings, Package, Calendar, Clock, X, PawPrint, ArrowLeft } from 'lucide-react';
 import { 
   db, 
   collection, 
@@ -20,6 +20,8 @@ import { useAuth } from '../../contexts/AuthContext';
 interface HeaderProps {
   activeView: string;
   setActiveView: (view: any) => void;
+  onBack?: () => void;
+  canGoBack?: boolean;
 }
 
 interface Notification {
@@ -31,7 +33,7 @@ interface Notification {
   status?: string;
 }
 
-export default function Header({ activeView, setActiveView }: HeaderProps) {
+export default function Header({ activeView, setActiveView, onBack, canGoBack }: HeaderProps) {
   const { isAuthReady, isStaff } = useAuth();
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -211,6 +213,16 @@ export default function Header({ activeView, setActiveView }: HeaderProps) {
   return (
     <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 flex-shrink-0 relative z-40">
       <div className="flex items-center gap-4">
+        {canGoBack && onBack && (
+          <button 
+            id="header-back-btn"
+            onClick={onBack}
+            className="p-2 hover:bg-slate-100 rounded-xl text-slate-500 transition-all flex items-center justify-center border border-slate-200 shadow-sm bg-white hover:scale-105 active:scale-95"
+            title="ย้อนกลับ"
+          >
+            <ArrowLeft className="w-5 h-5 text-slate-700" />
+          </button>
+        )}
         <h2 className="text-xl font-bold text-slate-900 capitalize">
           {activeView.replace(/-/g, ' ')}
         </h2>
