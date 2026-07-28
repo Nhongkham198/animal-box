@@ -366,79 +366,82 @@ export default function Inventory() {
       </div>
 
       {/* Main Inventory Layout */}
-      <div className="flex-1 bg-white rounded-[3rem] border border-slate-100 shadow-sm overflow-hidden flex flex-col">
-        <div className="p-8 border-b border-slate-100 grid grid-cols-12 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] bg-slate-50/50">
+      <div className="flex-1 bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden flex flex-col">
+        <div className="px-6 py-3.5 border-b border-slate-100 grid grid-cols-12 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] bg-slate-50/60">
           <div className="col-span-4">Item Identification</div>
           <div className="col-span-2 text-center">Price / Unit</div>
-          <div className="col-span-4 px-10 text-center">Stock Overview (Initial vs Current)</div>
+          <div className="col-span-4 px-6 text-center">Stock Overview (Initial vs Current)</div>
           <div className="col-span-2 text-right">Status</div>
         </div>
 
         <div className="flex-1 overflow-y-auto">
           {loading ? (
-            <div className="p-20 text-center flex flex-col items-center gap-4">
-              <RefreshCw className="w-8 h-8 text-[#00b4d8] animate-spin" />
+            <div className="p-16 text-center flex flex-col items-center gap-3">
+              <RefreshCw className="w-6 h-6 text-[#00b4d8] animate-spin" />
               <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Synchronizing Stocks...</p>
             </div>
           ) : filteredItems.length > 0 ? (
-            <div className="divide-y divide-slate-50">
+            <div className="divide-y divide-slate-100/70">
               {filteredItems.map((item, index) => {
                 const status = getStockStatus(item);
                 const progress = Math.min(100, Math.max(0, ((item.currentStock || 0) / (item.initialStock || 1)) * 100));
                 
                 return (
-                  <div key={`inv-item-${item.id || 'id'}-${index}`} className="p-8 grid grid-cols-12 items-center hover:bg-slate-50/20 transition-all group">
-                    <div className="col-span-4 flex items-center gap-5">
+                  <div key={`inv-item-${item.id || 'id'}-${index}`} className="px-6 py-3.5 grid grid-cols-12 items-center hover:bg-slate-50/50 transition-all group">
+                    {/* Item Identification Column */}
+                    <div className="col-span-4 flex items-center gap-3.5 min-w-0 pr-2">
                       <div className={cn(
-                        "w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner relative transition-transform group-hover:scale-105",
+                        "w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center shadow-sm relative transition-transform group-hover:scale-105",
                         status.bg, status.color
                       )}>
-                        <Package className="w-6 h-6" />
-                        {item.currentStock === 0 && <XCircle className="w-4 h-4 absolute -top-1 -right-1 fill-white" />}
+                        <Package className="w-5 h-5" />
+                        {item.currentStock === 0 && <XCircle className="w-3.5 h-3.5 absolute -top-1 -right-1 fill-white" />}
                       </div>
-                      <div>
-                        <p className="text-lg font-black text-slate-800 leading-tight mb-1">{item.name || item.itemName}</p>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md uppercase tracking-tighter">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-slate-800 leading-snug truncate group-hover:text-[#00b4d8] transition-colors" title={item.name || item.itemName}>
+                          {item.name || item.itemName}
+                        </p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded uppercase tracking-tight">
                             {item.type || item.category || 'General'}
                           </span>
                           {item.barcode && (
-                            <span className="text-[10px] font-mono text-slate-300">#{item.barcode}</span>
+                            <span className="text-[10px] font-mono text-slate-400">#{item.barcode}</span>
                           )}
                         </div>
                       </div>
                     </div>
 
                     <div className="col-span-2 text-center">
-                      <p className="text-xl font-black text-slate-700 tabular-nums">฿{(item.unitPrice || 0).toLocaleString()}</p>
-                      <p className="text-[10px] text-slate-400 font-bold uppercase">per {item.unit || 'unit'}</p>
+                      <p className="text-base font-bold text-slate-800 tabular-nums">฿{(item.unitPrice || 0).toLocaleString()}</p>
+                      <p className="text-[10px] text-slate-400 font-medium uppercase">per {item.unit || 'unit'}</p>
                     </div>
 
-                    <div className="col-span-4 px-10">
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between text-[11px] font-black uppercase tracking-tight">
-                          <div className="flex flex-col">
-                            <span className="text-slate-400">Current QTY</span>
-                            <span className={cn("text-lg", status.color)}>{(item.currentStock || 0).toLocaleString()}</span>
+                    <div className="col-span-4 px-6">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-tight">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-slate-400">Current:</span>
+                            <span className={cn("font-bold text-xs", status.color)}>{(item.currentStock || 0).toLocaleString()}</span>
                           </div>
-                          <div className="flex flex-col text-right">
-                            <span className="text-slate-300">Initial Stock</span>
-                            <span className="text-lg text-slate-900/40">{(item.initialStock || 0).toLocaleString()}</span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-slate-400">Initial:</span>
+                            <span className="text-slate-600 font-bold">{(item.initialStock || 0).toLocaleString()}</span>
                           </div>
                         </div>
-                        <div className="h-3 bg-slate-100 rounded-full overflow-hidden shadow-inner flex">
+                        <div className="h-2 bg-slate-100 rounded-full overflow-hidden flex">
                           <motion.div 
                             initial={{ width: 0 }}
                             animate={{ width: `${progress}%` }}
                             className={cn(
-                              "h-full rounded-full transition-all duration-1000",
+                              "h-full rounded-full transition-all duration-700",
                               status.color.replace('text-', 'bg-')
                             )}
                           />
                         </div>
-                        <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-300">
+                        <div className="flex justify-between items-center text-[9px] font-bold uppercase text-slate-400">
                           <span>0%</span>
-                          <span className="text-slate-400">Target Range: {(item.minStock || 0)}+</span>
+                          <span>Target Range: {(item.minStock || 0)}+</span>
                           <span>100%</span>
                         </div>
                       </div>
@@ -446,13 +449,13 @@ export default function Inventory() {
 
                     <div className="col-span-2 text-right">
                       <div className={cn(
-                        "inline-flex flex-col items-end px-4 py-3 rounded-2xl border transition-all",
+                        "inline-flex flex-col items-end px-3 py-1.5 rounded-xl border transition-all",
                         status.bg, status.border, status.color
                       )} title={item.currentStock === 0 ? "Out of Stock" : "Current Status"}>
-                        <span className="text-[10px] font-black uppercase tracking-[0.1em] leading-none mb-1">{status.label}</span>
-                        <div className="flex items-center gap-2">
+                        <span className="text-[9px] font-bold uppercase tracking-wider leading-none mb-0.5">{status.label}</span>
+                        <div className="flex items-center gap-1.5">
                           {(item.currentStock || 0) <= (item.minStock || 0) && <AlertTriangle className="w-3 h-3 animate-pulse" />}
-                          <span className="text-xs font-bold whitespace-nowrap">
+                          <span className="text-[11px] font-bold whitespace-nowrap">
                             {item.currentStock === 0 ? 'PLEASE RESTOCK' : `${progress.toFixed(0)}% Utilized`}
                           </span>
                         </div>

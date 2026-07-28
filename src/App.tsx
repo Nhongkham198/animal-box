@@ -3,23 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
+import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { 
   auth, 
-  db, 
   googleProvider, 
   signInWithPopup, 
   signInWithEmailAndPassword,
   signOut, 
-  onAuthStateChanged, 
-  doc, 
-  getDoc, 
-  setDoc,
-  FirebaseUser,
-  handleFirestoreError,
-  OperationType
 } from './firebase';
-import { useAsyncError } from './hooks/useAsyncError';
 import { 
   LayoutDashboard, 
   Calendar, 
@@ -27,15 +19,8 @@ import {
   Package, 
   CreditCard, 
   BarChart3, 
-  LogOut, 
-  Menu, 
-  X, 
   Plus,
-  Search,
-  Bell,
   Settings,
-  User as UserIcon,
-  Stethoscope,
   PawPrint,
   AlertCircle,
   ArrowLeftRight,
@@ -53,47 +38,38 @@ import Sidebar from './components/layout/Sidebar';
 import Header from './components/layout/Header';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
-// Components
-import Dashboard from './components/Dashboard';
-import Appointments from './components/Appointments';
-import CalendarView from './components/CalendarView';
-import AddAppointment from './components/AddAppointment';
-import SearchMicrochip from './components/SearchMicrochip';
-import OPDList from './components/OPDList';
-import IPDList from './components/IPDList';
-import Patients from './components/Patients';
-import Finance from './components/Finance';
-import Analytics from './components/Analytics';
-import PublicBooking from './components/PublicBooking';
-import Inventory from './components/Inventory';
-import POS from './components/POS';
-import HospitalProfile from './components/HospitalProfile';
-import Veterinarian from './components/Veterinarian';
-import ContactSetting from './components/ContactSetting';
-import ActivitiesSetting from './components/ActivitiesSetting';
-import RewardSetting from './components/RewardSetting';
-import ProductSetting from './components/ProductSetting';
-import UsageSetting from './components/UsageSetting';
-import PaymentMethodSetting from './components/PaymentMethodSetting';
-import CustomerBookingForm from './components/CustomerBookingForm';
-import PrinterSetting from './components/PrinterSetting';
+// Routes and view mapping
+import { ViewId, VIEW_TO_PATH_MAP, getViewFromPath, getPathFromView } from './routes';
 
-type View = 
-  | 'dashboard' 
-  | 'appointments' | 'calendar' | 'add-appointment'
-  | 'patients' | 'search-microchip' | 'add-pet'
-  | 'opd' | 'add-opd'
-  | 'ipd' | 'add-ipd'
-  | 'finance' | 'public-booking'
-  | 'inventory' | 'pos' | 'analytics' | 'public-form'
-  | 'settings-hospital' | 'settings-vet' | 'settings-contact' | 'settings-activities' | 'settings-reward' | 'settings-product' | 'settings-usage' | 'settings-payment' | 'settings-printer';
+// Shared Utilities & Guards
+import PageLoader from './components/PageLoader';
+import NotFound from './components/NotFound';
+import ProtectedRoute from './components/ProtectedRoute';
 
-interface NavGroup {
-  id: string;
-  label: string;
-  icon: React.ElementType;
-  subItems?: { id: View; label: string }[];
-}
+// Lazy Loaded Page Components (Code Splitting)
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const Appointments = lazy(() => import('./components/Appointments'));
+const CalendarView = lazy(() => import('./components/CalendarView'));
+const AddAppointment = lazy(() => import('./components/AddAppointment'));
+const SearchMicrochip = lazy(() => import('./components/SearchMicrochip'));
+const OPDList = lazy(() => import('./components/OPDList'));
+const IPDList = lazy(() => import('./components/IPDList'));
+const Patients = lazy(() => import('./components/Patients'));
+const Finance = lazy(() => import('./components/Finance'));
+const Analytics = lazy(() => import('./components/Analytics'));
+const PublicBooking = lazy(() => import('./components/PublicBooking'));
+const Inventory = lazy(() => import('./components/Inventory'));
+const POS = lazy(() => import('./components/POS'));
+const HospitalProfile = lazy(() => import('./components/HospitalProfile'));
+const Veterinarian = lazy(() => import('./components/Veterinarian'));
+const ContactSetting = lazy(() => import('./components/ContactSetting'));
+const ActivitiesSetting = lazy(() => import('./components/ActivitiesSetting'));
+const RewardSetting = lazy(() => import('./components/RewardSetting'));
+const ProductSetting = lazy(() => import('./components/ProductSetting'));
+const UsageSetting = lazy(() => import('./components/UsageSetting'));
+const PaymentMethodSetting = lazy(() => import('./components/PaymentMethodSetting'));
+const CustomerBookingForm = lazy(() => import('./components/CustomerBookingForm'));
+const PrinterSetting = lazy(() => import('./components/PrinterSetting'));
 
 export default function App() {
   return (
@@ -110,29 +86,23 @@ export default function App() {
 function AppContent() {
   const { user, loading, isAuthReady, authError } = useAuth();
   const { clinicName, quotaExceeded } = useClinic();
-  const [activeView, setActiveView] = useState<View>('dashboard');
-  const [viewHistory, setViewHistory] = useState<View[]>(['dashboard']);
+  
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Derive activeView from URL path
+  const activeView = getViewFromPath(location.pathname);
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
 
-  const navigateToView = (nextView: View) => {
-    setViewHistory(prev => {
-      // Don't add consecutive duplicates
-      if (prev[prev.length - 1] === nextView) return prev;
-      return [...prev, nextView];
-    });
-    setActiveView(nextView);
+  const navigateToView = (nextView: ViewId | string) => {
+    const targetPath = getPathFromView(nextView as ViewId);
+    navigate(targetPath);
   };
 
   const handleBack = () => {
-    if (viewHistory.length <= 1) return;
-    setViewHistory(prev => {
-      const newHistory = [...prev];
-      newHistory.pop(); // remove current view
-      const prevView = newHistory[newHistory.length - 1];
-      setActiveView(prevView);
-      return newHistory;
-    });
+    navigate(-1);
   };
 
   const [localAuthError, setLocalAuthError] = useState<string | null>(null);
@@ -279,10 +249,11 @@ function AppContent() {
     );
   }
 
-  if (activeView === 'public-form') {
+  // Standalone public booking page
+  if (location.pathname === '/public-booking-form') {
     return (
       <div className="min-h-screen bg-slate-50 p-6 md:p-12">
-        <CustomerBookingForm onBack={() => setActiveView('public-booking')} />
+        <CustomerBookingForm onBack={() => navigateToView('public-booking')} />
       </div>
     );
   }
@@ -312,7 +283,7 @@ function AppContent() {
           
           <div className="mb-8">
             <button
-               onClick={() => setActiveView('public-form')}
+               onClick={() => navigateToView('public-form')}
                className="w-full flex items-center justify-center gap-2 py-3 px-6 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-bold transition-all border border-slate-200 shadow-sm"
             >
               <ExternalLink className="w-4 h-4" />
@@ -473,59 +444,68 @@ function AppContent() {
             activeView={activeView} 
             setActiveView={navigateToView} 
             onBack={handleBack}
-            canGoBack={viewHistory.length > 1}
+            canGoBack={true}
           />
 
-          {/* View Content */}
+          {/* View Content with Multi-page Router & Code-Splitting */}
           <div className="flex-1 overflow-y-auto p-8">
             <AnimatePresence mode="wait">
               <motion.div
-                key={activeView}
+                key={location.pathname}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
                 transition={{ duration: 0.2 }}
                 className="h-full"
               >
-                  {activeView === 'dashboard' && <Dashboard />}
-                  {activeView === 'settings-hospital' && <HospitalProfile />}
-                  {activeView === 'settings-vet' && <Veterinarian />}
-                  {activeView === 'settings-contact' && <ContactSetting />}
-                  {activeView === 'settings-activities' && <ActivitiesSetting />}
-                  {activeView === 'settings-reward' && <RewardSetting />}
-                  {activeView === 'settings-product' && <ProductSetting />}
-                  {activeView === 'settings-usage' && <UsageSetting />}
-                  {activeView === 'settings-payment' && <PaymentMethodSetting />}
-                  {activeView === 'settings-printer' && <PrinterSetting />}
-                  {activeView === 'appointments' && <Appointments setActiveView={navigateToView} />}
-                  {activeView === 'calendar' && <CalendarView setActiveView={navigateToView} />}
-                  {activeView === 'add-appointment' && <AddAppointment />}
-                  {activeView === 'search-microchip' && <SearchMicrochip />}
-                  {activeView === 'opd' && <OPDList setActiveView={navigateToView} />}
-                  {activeView === 'ipd' && <IPDList />}
-                  {(activeView === 'patients' || activeView === 'add-pet') && <Patients />}
-                  {activeView === 'inventory' && <Inventory />}
-                  {activeView === 'pos' && <POS />}
-                  {activeView === 'analytics' && <Analytics />}
-                  {activeView === 'finance' && <Finance />}
-                  {activeView === 'public-booking' && <PublicBooking onOpenPublicForm={() => navigateToView('public-form')} />}
-                  {activeView.startsWith('settings') && 
-                    activeView !== 'settings-hospital' && 
-                    activeView !== 'settings-vet' && 
-                    activeView !== 'settings-contact' && 
-                    activeView !== 'settings-activities' && 
-                    activeView !== 'settings-reward' && 
-                    activeView !== 'settings-product' && (
-                    <div className="flex items-center justify-center h-full text-slate-400">
-                      <div className="text-center">
-                        <Settings className="w-12 h-12 mx-auto mb-4 opacity-20" />
-                        <h3 className="text-lg font-bold text-slate-600">{activeView.replace(/-/g, ' ')}</h3>
-                        <p>Settings module is coming soon.</p>
-                      </div>
-                    </div>
-                  )}
-                </motion.div>
-              </AnimatePresence>
+                <Suspense fallback={<PageLoader />}>
+                  <Routes>
+                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                    
+                    {/* Core Staff Protected Routes */}
+                    <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+                    <Route path="/appointments" element={<ProtectedRoute><Appointments setActiveView={navigateToView} /></ProtectedRoute>} />
+                    <Route path="/appointments/calendar" element={<ProtectedRoute><CalendarView setActiveView={navigateToView} /></ProtectedRoute>} />
+                    <Route path="/appointments/add" element={<ProtectedRoute><AddAppointment /></ProtectedRoute>} />
+                    
+                    {/* Patient & Microchip & Dynamic Detail Routes */}
+                    <Route path="/patients" element={<ProtectedRoute><Patients /></ProtectedRoute>} />
+                    <Route path="/patients/microchip" element={<ProtectedRoute><SearchMicrochip /></ProtectedRoute>} />
+                    <Route path="/patients/add" element={<ProtectedRoute><Patients /></ProtectedRoute>} />
+                    <Route path="/patients/:patientId" element={<ProtectedRoute><Patients /></ProtectedRoute>} />
+                    
+                    {/* OPD & Dynamic OPD Detail Routes */}
+                    <Route path="/opd" element={<ProtectedRoute><OPDList setActiveView={navigateToView} /></ProtectedRoute>} />
+                    <Route path="/opd/:opdId" element={<ProtectedRoute><OPDList setActiveView={navigateToView} /></ProtectedRoute>} />
+                    
+                    {/* IPD & Dynamic IPD Detail Routes */}
+                    <Route path="/ipd" element={<ProtectedRoute><IPDList /></ProtectedRoute>} />
+                    <Route path="/ipd/:ipdId" element={<ProtectedRoute><IPDList /></ProtectedRoute>} />
+                    
+                    {/* Operational & Financial Modules */}
+                    <Route path="/finance" element={<ProtectedRoute><Finance /></ProtectedRoute>} />
+                    <Route path="/booking-requests" element={<ProtectedRoute><PublicBooking onOpenPublicForm={() => navigateToView('public-form')} /></ProtectedRoute>} />
+                    <Route path="/inventory" element={<ProtectedRoute><Inventory /></ProtectedRoute>} />
+                    <Route path="/pos" element={<ProtectedRoute><POS /></ProtectedRoute>} />
+                    <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
+                    
+                    {/* Settings Routes */}
+                    <Route path="/settings/hospital" element={<ProtectedRoute><HospitalProfile /></ProtectedRoute>} />
+                    <Route path="/settings/user" element={<ProtectedRoute><Veterinarian /></ProtectedRoute>} />
+                    <Route path="/settings/contact" element={<ProtectedRoute><ContactSetting /></ProtectedRoute>} />
+                    <Route path="/settings/activities" element={<ProtectedRoute><ActivitiesSetting /></ProtectedRoute>} />
+                    <Route path="/settings/reward" element={<ProtectedRoute><RewardSetting /></ProtectedRoute>} />
+                    <Route path="/settings/product" element={<ProtectedRoute><ProductSetting /></ProtectedRoute>} />
+                    <Route path="/settings/room-rates" element={<ProtectedRoute><UsageSetting /></ProtectedRoute>} />
+                    <Route path="/settings/payment-methods" element={<ProtectedRoute><PaymentMethodSetting /></ProtectedRoute>} />
+                    <Route path="/settings/printer" element={<ProtectedRoute><PrinterSetting /></ProtectedRoute>} />
+                    
+                    {/* 404 Not Found Page */}
+                    <Route path="*" element={<NotFound />} />
+                  </Routes>
+                </Suspense>
+              </motion.div>
+            </AnimatePresence>
           </div>
         </main>
 
@@ -570,7 +550,7 @@ function AppContent() {
             ].map((item) => (
               <button 
                 key={item.id}
-                onClick={() => item.action ? item.action() : navigateToView(item.id as View)}
+                onClick={() => item.action ? item.action() : navigateToView(item.id as ViewId)}
                 className={cn(
                   "flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-xl border border-slate-100 hover:bg-slate-50 transition-all whitespace-nowrap",
                   fabSide === 'right' ? "flex-row" : "flex-row-reverse"
@@ -588,3 +568,4 @@ function AppContent() {
     </ErrorBoundary>
   );
 }
+

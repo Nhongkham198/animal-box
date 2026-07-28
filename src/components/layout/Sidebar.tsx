@@ -101,6 +101,16 @@ export default function Sidebar({
     },
   ];
 
+  React.useEffect(() => {
+    navGroups.forEach(group => {
+      if (group.subItems?.some(item => item.id === activeView)) {
+        if (!expandedGroups.includes(group.id)) {
+          toggleGroup(group.id);
+        }
+      }
+    });
+  }, [activeView]);
+
   return (
     <aside 
       className={cn(

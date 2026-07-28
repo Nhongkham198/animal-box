@@ -16,6 +16,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../contexts/AuthContext';
+import { useLocation } from 'react-router-dom';
+import { VIEW_LABELS } from '../../routes';
 
 interface HeaderProps {
   activeView: string;
@@ -210,6 +212,9 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack }:
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const location = useLocation();
+  const routeInfo = VIEW_LABELS[location.pathname] || { title: activeView.replace(/-/g, ' ') };
+
   return (
     <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 flex-shrink-0 relative z-40">
       <div className="flex items-center gap-4">
@@ -223,9 +228,18 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack }:
             <ArrowLeft className="w-5 h-5 text-slate-700" />
           </button>
         )}
-        <h2 className="text-xl font-bold text-slate-900 capitalize">
-          {activeView.replace(/-/g, ' ')}
-        </h2>
+        <div>
+          {routeInfo.category && (
+            <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">
+              <span>{routeInfo.category}</span>
+              <span>/</span>
+              <span className="text-[#00b4d8]">{routeInfo.title}</span>
+            </div>
+          )}
+          <h2 className="text-xl font-bold text-slate-900 capitalize">
+            {routeInfo.title}
+          </h2>
+        </div>
       </div>
 
       <div className="flex items-center gap-4">
@@ -404,7 +418,18 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack }:
           </AnimatePresence>
         </div>
 
-        <button className="p-2 hover:bg-slate-100 rounded-xl text-slate-500">
+        <button 
+          id="header-settings-btn"
+          onClick={() => {
+            if (activeView === 'pos') {
+              window.dispatchEvent(new CustomEvent('open-pos-settings'));
+            } else {
+              setActiveView('settings-product');
+            }
+          }}
+          className="p-2 hover:bg-slate-100 rounded-xl text-slate-500 transition-all hover:scale-105 active:scale-95"
+          title="ตั้งค่า"
+        >
           <Settings className="w-5 h-5" />
         </button>
       </div>
