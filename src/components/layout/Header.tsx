@@ -545,6 +545,18 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack }:
           </AnimatePresence>
         </div>
 
+        {(activeView === 'inventory' || activeView.startsWith('inventory')) && (
+          <button 
+            id="header-settings-btn"
+            onClick={() => {
+              setActiveView('settings-product');
+            }}
+            className="p-2 hover:bg-slate-100 rounded-xl text-slate-500 transition-all hover:scale-105 active:scale-95"
+            title="ตั้งค่าสินค้าและเวชภัณฑ์ (Product Setting)"
+          >
+            <Settings className="w-5 h-5" />
+          </button>
+        )}
       </div>
     </header>
   );

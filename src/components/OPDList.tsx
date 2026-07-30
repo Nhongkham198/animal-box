@@ -59,6 +59,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useClinic } from '../contexts/ClinicContext';
 import { cn } from '../lib/utils';
 import { AnatomyMap } from './AnatomyMap';
+import { WoundCanvas } from './WoundCanvas';
 
 export const PHYSICAL_EXAM_CHECKLIST_ITEMS = [
   { id: '1', name: '1. General Appearance', th: 'ลักษณะทั่วไป' },
@@ -263,7 +264,8 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
     chiefComplaint: '',
     historyTaking: '',
     problemList: '',
-    typeOfFood: ''
+    typeOfFood: '',
+    woundCareImage: ''
   });
 
   const [mergedBillingRecords, setMergedBillingRecords] = useState<any[]>([]);
@@ -2545,6 +2547,20 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                 placeholder="ข้อควรปฏิบัติและการสังเกตอาการที่บ้าน..."
                               />
                             </div>
+
+                            {/* Wound Location Diagram Canvas */}
+                            <div className="space-y-1.5 pt-2">
+                              <label className="text-xs font-black text-rose-500 uppercase tracking-widest flex items-center gap-2 ml-1">
+                                <Activity className="w-3.5 h-3.5 text-rose-500" /> บันทึกตำแหน่งบาดแผล (Wound Diagram)
+                              </label>
+                              <WoundCanvas 
+                                species={selectedPatient?.species || newRecord.species || ''}
+                                initialDataUrl={newRecord.woundCareImage}
+                                onChange={(dataUrl) => {
+                                  setNewRecord((prev: any) => ({ ...prev, woundCareImage: dataUrl }));
+                                }}
+                              />
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -4518,6 +4534,12 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
 
                                  {rec.items && rec.items.length > 0 && (
                                    <div className="flex flex-wrap gap-1.5 mt-5 pt-5 border-t border-slate-50">
+                                  {rec.woundCareImage && (
+                                    <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80 mt-3 mb-3">
+                                      <span className="text-[8px] font-black text-slate-500 uppercase tracking-[0.2em] block mb-2">ตำแหน่งบาดแผลที่บันทึกไว้ (Wound Diagram)</span>
+                                      <img src={rec.woundCareImage} alt="Wound Diagram" className="w-full max-w-[280px] mx-auto rounded-xl border border-slate-200 bg-white shadow-xs" />
+                                    </div>
+                                  )}
                                       {rec.items.slice(0, 3).map((it: any, i: number) => (
                                         <span key={i} className="text-[8px] font-black bg-slate-50 text-slate-400 px-3 py-1.5 rounded-xl uppercase tracking-tighter hover:bg-[#00b4d8] hover:text-white transition-colors cursor-default">
                                           {it.name}

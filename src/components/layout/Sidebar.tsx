@@ -97,6 +97,7 @@ export default function Sidebar({
         { id: 'settings-usage', label: 'ตั้งค่าราคาห้องพักสัตว์เลี้ยง' },
         { id: 'settings-payment', label: 'Payment Method Setting' },
         { id: 'settings-printer', label: 'Printer Setting' },
+        { id: 'settings-diagram', label: 'ตั้งค่าภาพกายวิภาคสัตว์' },
       ]
     },
   ];

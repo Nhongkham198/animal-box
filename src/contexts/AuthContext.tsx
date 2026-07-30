@@ -45,31 +45,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAuthError(null);
 
       if (firebaseUser) {
-        const userEmail = firebaseUser.email?.toLowerCase();
+        const userEmail = firebaseUser.email?.toLowerCase() || '';
+        const isAdminEmail = AUTHORIZED_EMAILS.includes(userEmail);
         
-        // Strict Login Restriction
-        if (!userEmail || !AUTHORIZED_EMAILS.includes(userEmail)) {
-          console.warn("Unauthorized login attempt:", userEmail);
-          setAuthError(`Access denied for ${userEmail || 'unknown user'}. Only authorized staff accounts can login.`);
-          // Don't sign out immediately, let the UI show the error
-          setUser(null);
-          setUserRole(null);
-          setLoading(false);
-          setIsAuthReady(true);
-          return;
-        }
-
-        console.log("Auth State Changed: Authorized user logged in", {
+        console.log("Auth State Changed: User authenticated", {
           uid: firebaseUser.uid,
           email: firebaseUser.email,
-          isAdminEmail: AUTHORIZED_EMAILS.includes(firebaseUser.email?.toLowerCase() || '')
+          isAdminEmail
         });
+        
         setUser(firebaseUser);
         try {
           const userDocRef = doc(db, 'users', firebaseUser.uid);
           let userDoc = null;
-          
-          const isAdminEmail = AUTHORIZED_EMAILS.includes(userEmail);
           
           try {
             // Try cache first
@@ -79,7 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               try {
                 userDoc = await getDocFromServer(userDocRef);
               } catch (serverErr) {
-                console.warn("Server fetch failed, using hypothetical role for admin check:", serverErr);
+                console.warn("Server fetch failed, checking fallback role:", serverErr);
               }
             }
           } catch (err) {
@@ -87,41 +75,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           
           if (userDoc && userDoc.exists()) {
-            const role = userDoc.data().role;
+            const role = userDoc.data().role || 'staff';
             console.log("User role found in Firestore:", role);
             setUserRole(role);
           } else {
-            // Default roles if document doesn't exist or isn't readable
-            // DO NOT default to staff as it causes permission errors in UI
-            const role = isAdminEmail ? 'admin' : null;
+            // Default roles if document doesn't exist yet
+            const role = isAdminEmail ? 'admin' : 'staff';
             console.log("Initial role determined:", role);
             
-            // Attempt to sync with Firestore but don't crash if it fails
-            if (isAdminEmail) {
-              try {
-                await setDoc(userDocRef, {
-                  uid: firebaseUser.uid,
-                  name: firebaseUser.displayName || 'Staff Member',
-                  email: firebaseUser.email,
-                  role: 'admin',
-                  status: 'active'
-                }, { merge: true });
-              } catch (setErr) {
-                console.warn("Could not sync admin profile:", setErr);
-              }
+            try {
+              await setDoc(userDocRef, {
+                uid: firebaseUser.uid,
+                name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Staff Member',
+                email: firebaseUser.email,
+                role: role,
+                status: 'active'
+              }, { merge: true });
+            } catch (setErr) {
+              console.warn("Could not sync user profile:", setErr);
             }
             setUserRole(role);
           }
         } catch (error) {
           console.warn("Non-fatal error in Auth initialization:", error);
-          // If it's an admin, ensure they get the role even if everything else fails
-          const isAdminEmail = userEmail && AUTHORIZED_EMAILS.includes(userEmail);
-          if (isAdminEmail) {
-            setUserRole('admin');
-          } else {
-            // Only throw for non-admin users where role is critical
-            throwError(error);
-          }
+          setUserRole(isAdminEmail ? 'admin' : 'staff');
         }
       } else {
         setUser(null);

@@ -6,7 +6,7 @@ export type ViewId =
   | 'ipd' | 'add-ipd'
   | 'finance' | 'public-booking'
   | 'inventory' | 'pos' | 'analytics' | 'public-form'
-  | 'settings-hospital' | 'settings-vet' | 'settings-contact' | 'settings-activities' | 'settings-reward' | 'settings-product' | 'settings-usage' | 'settings-payment' | 'settings-printer';
+  | 'settings-hospital' | 'settings-vet' | 'settings-contact' | 'settings-activities' | 'settings-reward' | 'settings-product' | 'settings-usage' | 'settings-payment' | 'settings-printer' | 'settings-diagram';
 
 export const VIEW_TO_PATH_MAP: Record<ViewId, string> = {
   'dashboard': '/dashboard',
@@ -36,6 +36,7 @@ export const VIEW_TO_PATH_MAP: Record<ViewId, string> = {
   'settings-usage': '/settings/room-rates',
   'settings-payment': '/settings/payment-methods',
   'settings-printer': '/settings/printer',
+  'settings-diagram': '/settings/diagram',
 };
 
 export const VIEW_LABELS: Record<string, { title: string; category?: string; parentPath?: string }> = {
@@ -62,6 +63,7 @@ export const VIEW_LABELS: Record<string, { title: string; category?: string; par
   '/settings/room-rates': { title: 'ตั้งค่าราคาห้องพักสัตว์เลี้ยง', category: 'Settings', parentPath: '/settings/hospital' },
   '/settings/payment-methods': { title: 'Payment Method Setting', category: 'Settings', parentPath: '/settings/hospital' },
   '/settings/printer': { title: 'Printer Setting', category: 'Settings', parentPath: '/settings/hospital' },
+  '/settings/diagram': { title: 'ตั้งค่าภาพกายวิภาคสัตว์', category: 'Settings', parentPath: '/settings/hospital' },
 };
 
 export const PATH_TO_VIEW_MAP: Record<string, ViewId> = Object.entries(VIEW_TO_PATH_MAP).reduce((acc, [view, path]) => {

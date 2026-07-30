@@ -11,6 +11,13 @@ import {
   signInWithPopup, 
   signInWithEmailAndPassword,
   signOut, 
+  db,
+  collection,
+  query,
+  where,
+  getDocs,
+  doc,
+  setDoc
 } from './firebase';
 import { 
   LayoutDashboard, 
@@ -70,6 +77,7 @@ const UsageSetting = lazy(() => import('./components/UsageSetting'));
 const PaymentMethodSetting = lazy(() => import('./components/PaymentMethodSetting'));
 const CustomerBookingForm = lazy(() => import('./components/CustomerBookingForm'));
 const PrinterSetting = lazy(() => import('./components/PrinterSetting'));
+const DiagramSetting = lazy(() => import('./components/DiagramSetting'));
 
 export default function App() {
   return (
@@ -148,12 +156,48 @@ function AppContent() {
       console.error("Auth failed:", error);
       if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
         if (loginMode === 'login') {
-          setLocalAuthError("Invalid email or password. If you haven't created an account in this new project yet, please use 'Sign Up'.");
+          // Check if password matches user setting in Firestore
+          try {
+            const searchEmail = email.trim().toLowerCase();
+            const q = query(collection(db, 'users'), where('email', '==', searchEmail));
+            const querySnapshot = await getDocs(q);
+            
+            let matchedDoc: any = null;
+            querySnapshot.forEach(docSnap => {
+              const data = docSnap.data();
+              if (data.password === password || data.pin === password) {
+                matchedDoc = { id: docSnap.id, ...data };
+              }
+            });
+
+            if (matchedDoc) {
+              console.log("Firestore staff profile password matched:", matchedDoc.email);
+              const { signInAnonymously } = await import('firebase/auth');
+              const anonCred = await signInAnonymously(auth);
+              await setDoc(doc(db, 'users', anonCred.user.uid), {
+                uid: anonCred.user.uid,
+                name: matchedDoc.name || matchedDoc.firstName || matchedDoc.email?.split('@')[0] || 'Staff Member',
+                email: matchedDoc.email,
+                role: matchedDoc.role || 'staff',
+                status: 'active'
+              }, { merge: true });
+              return; // Successfully authenticated via staff record
+            }
+          } catch (fallbackErr) {
+            console.warn("Firestore fallback auth check failed:", fallbackErr);
+          }
+
+          setLocalAuthError("อีเมลหรือรหัสผ่านไม่ถูกต้อง หากคุณใช้อีเมล Google ในการลงทะเบียน หรือเปิดใช้งานในระบบไว้แล้ว สามารถกดปุ่ม 'Sign in with Google' ด้านบนเพื่อเข้าสู่ระบบได้ทันที");
         } else {
-          setLocalAuthError("Invalid credentials. Please ensure your password is at least 6 characters.");
+          setLocalAuthError("ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบอีเมลและรหัสผ่าน (อย่างน้อย 6 ตัวอักษร)");
         }
       } else if (error.code === 'auth/email-already-in-use') {
-        setLocalAuthError("This email is already registered. Please login instead.");
+        setLoginMode('login');
+        setLocalAuthError("อีเมลนี้ถูกลงทะเบียนไว้แล้ว สามารถกดปุ่ม 'Sign in with Google' หรือกรอกรหัสผ่านเพื่อเข้าสู่ระบบ");
+      } else if (error.code === 'auth/weak-password') {
+        setLocalAuthError("รหัสผ่านไม่ปลอดภัยพอ กรุณาใช้รหัสผ่านอย่างน้อย 6 ตัวอักษร");
+      } else if (error.code === 'auth/invalid-email') {
+        setLocalAuthError("รูปแบบอีเมลไม่ถูกต้อง กรุณาตรวจสอบอีเมลของคุณ");
       } else if (error.code === 'auth/too-many-requests') {
         setLocalAuthError("Too many attempts. Please try again later.");
       } else {
@@ -297,108 +341,120 @@ function AppContent() {
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
                 exit={{ opacity: 0, height: 0 }}
-                className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-3 text-left"
+                className="mb-6 p-4 bg-rose-50 border border-rose-200 rounded-2xl flex flex-col gap-2 text-left"
               >
-                <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
-                <p className="text-sm font-medium text-rose-600">{authError || localAuthError}</p>
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+                  <p className="text-sm font-medium text-rose-700">{authError || localAuthError}</p>
+                </div>
+                {loginMode === 'login' && localAuthError?.includes("Sign Up") && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginMode('signup');
+                      setLocalAuthError(null);
+                    }}
+                    className="self-start ml-8 text-xs font-bold text-indigo-600 hover:text-indigo-800 underline transition-colors cursor-pointer"
+                  >
+                    👉 คลิกที่นี่เพื่อสลับเป็นหน้าลงทะเบียน (Sign Up)
+                  </button>
+                )}
+                {loginMode === 'signup' && localAuthError?.includes("Login") && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginMode('login');
+                      setLocalAuthError(null);
+                    }}
+                    className="self-start ml-8 text-xs font-bold text-indigo-600 hover:text-indigo-800 underline transition-colors cursor-pointer"
+                  >
+                    👉 คลิกที่นี่เพื่อสลับเป็นหน้าเข้าสู่ระบบ (Login)
+                  </button>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
 
-          <AnimatePresence mode="wait">
-            {loginMethod === 'google' ? (
-              <motion.div
-                key="google-login"
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 20 }}
-                className="space-y-4"
-              >
-                <button
-                  onClick={handleLogin}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-4 px-6 rounded-2xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-3"
-                >
-                  <img src="https://www.google.com/favicon.ico" className="w-5 h-5 brightness-0 invert" alt="Google" />
-                  Sign in with Google
-                </button>
-                <button 
-                  onClick={() => setLoginMethod('email')}
-                  className="w-full text-slate-500 font-medium text-sm hover:text-indigo-600 transition-colors"
-                >
-                  Alternatively, sign in with Email & Password
-                </button>
-              </motion.div>
-            ) : (
-              <motion.form
-                key="email-login"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                onSubmit={handleEmailAuth}
-                className="space-y-4 text-left"
-              >
-                <div className="flex gap-4 mb-6 p-1 bg-slate-100 rounded-2xl">
-                  <button
-                    type="button"
-                    onClick={() => setLoginMode('login')}
-                    className={cn(
-                      "flex-1 py-2 text-xs font-black uppercase tracking-widest rounded-xl transition-all",
-                      loginMode === 'login' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                    )}
-                  >
-                    Login
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setLoginMode('signup')}
-                    className={cn(
-                      "flex-1 py-2 text-xs font-black uppercase tracking-widest rounded-xl transition-all",
-                      loginMode === 'signup' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                    )}
-                  >
-                    Sign Up
-                  </button>
-                </div>
+          <div className="space-y-4 text-left">
+            {/* Direct Google Sign In Option */}
+            <button
+              type="button"
+              onClick={handleLogin}
+              className="w-full bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold py-3.5 px-6 rounded-2xl transition-all shadow-xs flex items-center justify-center gap-3 cursor-pointer"
+            >
+              <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
+              <span>Sign in with Google</span>
+            </button>
 
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Email Address</label>
-                  <input 
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-6 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                    placeholder="name@clinic.com"
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Password</label>
-                  <input 
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-6 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                    placeholder="••••••••"
-                    required
-                  />
-                </div>
+            <div className="relative flex py-2 items-center">
+              <div className="flex-grow border-t border-slate-200"></div>
+              <span className="shrink mx-4 text-[11px] font-black text-slate-400 uppercase tracking-widest">or sign in with email</span>
+              <div className="flex-grow border-t border-slate-200"></div>
+            </div>
+
+            <form onSubmit={handleEmailAuth} className="space-y-4">
+              <div className="flex gap-4 p-1 bg-slate-100 rounded-2xl">
                 <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-semibold py-4 px-6 rounded-2xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-3"
-                >
-                  {isSubmitting ? 'Processing...' : loginMode === 'login' ? 'Sign in with Email' : 'Create Account'}
-                </button>
-                <button 
                   type="button"
-                  onClick={() => setLoginMethod('google')}
-                  className="w-full text-center text-slate-500 font-medium text-sm hover:text-indigo-600 transition-colors"
+                  onClick={() => {
+                    setLoginMode('login');
+                    setLocalAuthError(null);
+                  }}
+                  className={cn(
+                    "flex-1 py-2 text-xs font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer",
+                    loginMode === 'login' ? "bg-white text-indigo-600 shadow-xs" : "text-slate-500 hover:text-slate-700"
+                  )}
                 >
-                  Back to Google Login
+                  Login
                 </button>
-              </motion.form>
-            )}
-          </AnimatePresence>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginMode('signup');
+                    setLocalAuthError(null);
+                  }}
+                  className={cn(
+                    "flex-1 py-2 text-xs font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer",
+                    loginMode === 'signup' ? "bg-white text-indigo-600 shadow-xs" : "text-slate-500 hover:text-slate-700"
+                  )}
+                >
+                  Sign Up
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Email Address</label>
+                <input 
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-5 focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-sm font-medium text-slate-800"
+                  placeholder="name@clinic.com"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Password</label>
+                <input 
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-5 focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-sm font-medium text-slate-800"
+                  placeholder="••••••••"
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold py-3.5 px-6 rounded-2xl transition-all shadow-md shadow-indigo-100 flex items-center justify-center gap-2 cursor-pointer mt-2"
+              >
+                {isSubmitting ? 'กำลังดำเนินการ...' : loginMode === 'login' ? 'เข้าสู่ระบบ (Sign in)' : 'สร้างบัญชีผู้ใช้ใหม่ (Sign up)'}
+              </button>
+            </form>
+          </div>
           
           <p className="mt-8 text-xs text-slate-400">
             Authorized personnel only. Access is monitored and logged.
@@ -499,6 +555,7 @@ function AppContent() {
                     <Route path="/settings/room-rates" element={<ProtectedRoute><UsageSetting /></ProtectedRoute>} />
                     <Route path="/settings/payment-methods" element={<ProtectedRoute><PaymentMethodSetting /></ProtectedRoute>} />
                     <Route path="/settings/printer" element={<ProtectedRoute><PrinterSetting /></ProtectedRoute>} />
+                    <Route path="/settings/diagram" element={<ProtectedRoute><DiagramSetting /></ProtectedRoute>} />
                     
                     {/* 404 Not Found Page */}
                     <Route path="*" element={<NotFound />} />
