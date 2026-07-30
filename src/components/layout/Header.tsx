@@ -28,10 +28,13 @@ interface HeaderProps {
 
 interface Notification {
   id: string;
-  type: 'booking' | 'stock';
+  type: 'booking' | 'stock' | 'appointment';
   title: string;
   message: string;
   time: any;
+  dateStr?: string;
+  petName?: string;
+  ownerName?: string;
   status?: string;
 }
 
@@ -39,6 +42,7 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack }:
   const { isAuthReady, isStaff } = useAuth();
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [notifFilter, setNotifFilter] = useState<'all' | 'appointment' | 'booking' | 'stock'>('all');
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
   const [globalSearchResults, setGlobalSearchResults] = useState<{patients: any[], inventory: any[]}>({ patients: [], inventory: [] });
   const [isGlobalSearching, setIsGlobalSearching] = useState(false);
@@ -136,20 +140,58 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack }:
   useEffect(() => {
     if (!isAuthReady || !isStaff) return;
 
+    // Listen for Pet Appointments
+    const apptQuery = query(
+      collection(db, 'appointments'),
+      limit(25)
+    );
+
+    const unsubscribeAppointments = onSnapshot(apptQuery, (snap) => {
+      const apptNotifications: Notification[] = snap.docs
+        .map(doc => {
+          const d = doc.data();
+          const petName = d.patientName || d.petName || 'สัตว์เลี้ยง';
+          const ownerInfo = d.ownerName ? ` (คุณ${d.ownerName})` : '';
+          const service = d.serviceType ? `นัด${d.serviceType}` : (d.notes || 'การนัดหมายตรวจรักษา');
+          const dateStr = d.date || (d.startTime?.toDate ? format(d.startTime.toDate(), 'dd/MM/yyyy') : '');
+          const timeStr = d.time || (d.startTime?.toDate ? format(d.startTime.toDate(), 'HH:mm') : '');
+          
+          return {
+            id: doc.id,
+            type: 'appointment' as const,
+            title: `นัดหมายสัตว์เลี้ยง: ${petName}`,
+            message: `${service}${ownerInfo} • ${dateStr} ${timeStr}`,
+            time: d.startTime || d.createdAt || null,
+            dateStr: dateStr,
+            petName: petName,
+            ownerName: d.ownerName || '',
+            status: d.status || 'scheduled'
+          };
+        })
+        .filter(item => {
+          const st = (item.status || '').toLowerCase().trim();
+          return st !== 'completed' && st !== 'done' && st !== 'cancelled';
+        });
+
+      updateNotifications(apptNotifications, 'appointment');
+    }, (error) => {
+      console.warn("Permission restricted for appointments listener (non-critical):", error.message);
+    });
+
     // Listen for New Booking Requests (Pending)
     const bookingQuery = query(
       collection(db, 'public_bookings'),
       where('status', '==', 'pending'),
       orderBy('createdAt', 'desc'),
-      limit(5)
+      limit(10)
     );
 
     const unsubscribeBookings = onSnapshot(bookingQuery, (snap) => {
       const bookingNotifications: Notification[] = snap.docs.map(doc => ({
         id: doc.id,
         type: 'booking',
-        title: 'New Booking Request',
-        message: `จากคุณ ${doc.data().ownerName} (${doc.data().petName})`,
+        title: 'คำขอนัดหมายออนไลน์ใหม่',
+        message: `จากคุณ ${doc.data().ownerName} (${doc.data().petName}) • ${doc.data().serviceType || 'ขอนัดหมาย'}`,
         time: doc.data().createdAt,
         status: doc.data().status
       }));
@@ -157,7 +199,6 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack }:
       updateNotifications(bookingNotifications, 'booking');
     }, (error) => {
       console.warn("Permission restricted for bookings listener (non-critical):", error.message);
-      // Don't throw to global ErrorBoundary for background notification listeners
     });
 
     // Listen for Low Stock Items
@@ -172,7 +213,7 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack }:
         .map(doc => ({
           id: doc.id,
           type: 'stock',
-          title: 'Low Stock Alert',
+          title: 'แจ้งเตือนสินค้าใกล้หมด',
           message: `${doc.data().itemName} เหลือเพียง ${doc.data().quantity} ชิ้น`,
           time: null
         }));
@@ -183,17 +224,18 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack }:
     });
 
     return () => {
+      unsubscribeAppointments();
       unsubscribeBookings();
       unsubscribeStock();
     };
   }, [isAuthReady, isStaff]);
 
-  const updateNotifications = (newItems: Notification[], type: 'booking' | 'stock') => {
+  const updateNotifications = (newItems: Notification[], type: 'booking' | 'stock' | 'appointment') => {
     setNotifications(prev => {
       const otherTypeItems = prev.filter(n => n.type !== type);
       return [...otherTypeItems, ...newItems].sort((a, b) => {
-        const timeA = a.time?.toDate ? a.time.toDate().getTime() : 0;
-        const timeB = b.time?.toDate ? b.time.toDate().getTime() : 0;
+        const timeA = a.time?.toDate ? a.time.toDate().getTime() : (typeof a.time === 'number' ? a.time : 0);
+        const timeB = b.time?.toDate ? b.time.toDate().getTime() : (typeof b.time === 'number' ? b.time : 0);
         return timeB - timeA;
       });
     });
@@ -358,59 +400,144 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack }:
                 initial={{ opacity: 0, y: 10, scale: 0.95 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden"
+                className="absolute right-0 mt-2 w-96 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden z-50"
               >
-                <div className="p-4 border-b border-slate-50 bg-slate-50/50 flex items-center justify-between">
-                  <h3 className="font-black text-slate-800 uppercase tracking-tight text-sm">Notifications</h3>
-                  <span className="px-2 py-0.5 bg-[#00b4d8] text-white text-[10px] font-bold rounded-full">
-                    {notifications.length} New
+                <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Bell className="w-4 h-4 text-[#00b4d8]" />
+                    <h3 className="font-black text-slate-800 tracking-tight text-sm">การแจ้งเตือน (Notifications)</h3>
+                  </div>
+                  <span className="px-2.5 py-0.5 bg-[#00b4d8] text-white text-[10px] font-bold rounded-full">
+                    {notifications.length} รายการ
                   </span>
                 </div>
 
-                <div className="max-h-[400px] overflow-y-auto">
-                  {notifications.length > 0 ? (
-                    notifications.map((notif) => (
-                      <div 
-                        key={notif.id} 
-                        className="p-4 border-b border-slate-50 hover:bg-slate-50 transition-colors cursor-pointer group"
-                      >
-                        <div className="flex gap-3">
-                          <div className={cn(
-                            "w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0",
-                            notif.type === 'booking' ? "bg-blue-50 text-blue-500" : "bg-amber-50 text-amber-500"
-                          )}>
-                            {notif.type === 'booking' ? <Calendar className="w-5 h-5" /> : <Package className="w-5 h-5" />}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-black text-slate-800 uppercase tracking-tight truncate">
-                              {notif.title}
-                            </p>
-                            <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">
-                              {notif.message}
-                            </p>
-                            {notif.time && (
-                              <div className="flex items-center gap-1 mt-2 text-[10px] text-slate-400 font-bold">
-                                <Clock className="w-3 h-3" />
-                                {format(notif.time.toDate(), 'dd MMM, hh:mm a')}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="p-12 text-center">
-                      <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <Bell className="w-8 h-8 text-slate-200" />
-                      </div>
-                      <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">No notifications</p>
-                    </div>
-                  )}
+                {/* Filter Tabs */}
+                <div className="flex items-center gap-1 p-2 bg-slate-50/80 border-b border-slate-100 text-xs font-bold overflow-x-auto">
+                  <button
+                    onClick={() => setNotifFilter('all')}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg transition-all text-[11px]",
+                      notifFilter === 'all' ? "bg-white text-slate-800 shadow-sm font-black" : "text-slate-400 hover:text-slate-600"
+                    )}
+                  >
+                    ทั้งหมด ({notifications.length})
+                  </button>
+                  <button
+                    onClick={() => setNotifFilter('appointment')}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg transition-all text-[11px]",
+                      notifFilter === 'appointment' ? "bg-indigo-50 text-indigo-600 shadow-sm font-black" : "text-slate-400 hover:text-slate-600"
+                    )}
+                  >
+                    นัดหมาย ({notifications.filter(n => n.type === 'appointment').length})
+                  </button>
+                  <button
+                    onClick={() => setNotifFilter('booking')}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg transition-all text-[11px]",
+                      notifFilter === 'booking' ? "bg-emerald-50 text-emerald-600 shadow-sm font-black" : "text-slate-400 hover:text-slate-600"
+                    )}
+                  >
+                    จองออนไลน์ ({notifications.filter(n => n.type === 'booking').length})
+                  </button>
+                  <button
+                    onClick={() => setNotifFilter('stock')}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg transition-all text-[11px]",
+                      notifFilter === 'stock' ? "bg-amber-50 text-amber-600 shadow-sm font-black" : "text-slate-400 hover:text-slate-600"
+                    )}
+                  >
+                    สต็อก ({notifications.filter(n => n.type === 'stock').length})
+                  </button>
                 </div>
 
-                <div className="p-3 bg-slate-50/50 border-t border-slate-100">
-                  <button className="w-full py-2 text-[10px] font-black text-[#00b4d8] uppercase tracking-widest hover:bg-white rounded-lg transition-all">
-                    View All Notifications
+                <div className="max-h-[380px] overflow-y-auto divide-y divide-slate-50">
+                  {(() => {
+                    const filtered = notifications.filter(n => notifFilter === 'all' || n.type === notifFilter);
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="p-10 text-center">
+                          <div className="w-14 h-14 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3">
+                            <Bell className="w-7 h-7 text-slate-200" />
+                          </div>
+                          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">ไม่มีรายการแจ้งเตือน</p>
+                        </div>
+                      );
+                    }
+
+                    return filtered.map((notif) => (
+                      <div 
+                        key={notif.id} 
+                        onClick={() => {
+                          setIsNotificationsOpen(false);
+                          if (notif.type === 'appointment') {
+                            setActiveView('appointments');
+                          } else if (notif.type === 'booking') {
+                            setActiveView('booking-requests');
+                          } else if (notif.type === 'stock') {
+                            setActiveView('inventory');
+                          }
+                        }}
+                        className="p-3.5 hover:bg-slate-50 transition-all cursor-pointer group flex gap-3 items-start"
+                      >
+                        <div className={cn(
+                          "w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm mt-0.5",
+                          notif.type === 'appointment' ? "bg-indigo-50 text-indigo-500 border border-indigo-100" :
+                          notif.type === 'booking' ? "bg-emerald-50 text-emerald-500 border border-emerald-100" :
+                          "bg-amber-50 text-amber-500 border border-amber-100"
+                        )}>
+                          {notif.type === 'appointment' ? <Calendar className="w-4 h-4" /> :
+                           notif.type === 'booking' ? <Clock className="w-4 h-4" /> :
+                           <Package className="w-4 h-4" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-1">
+                            <p className="text-xs font-black text-slate-800 tracking-tight truncate">
+                              {notif.title}
+                            </p>
+                            <span className={cn(
+                              "text-[9px] font-bold px-1.5 py-0.5 rounded uppercase",
+                              notif.type === 'appointment' ? "bg-indigo-50 text-indigo-600" :
+                              notif.type === 'booking' ? "bg-emerald-50 text-emerald-600" :
+                              "bg-amber-50 text-amber-600"
+                            )}>
+                              {notif.type === 'appointment' ? 'นัดหมาย' : notif.type === 'booking' ? 'จองออนไลน์' : 'เตือนสต็อก'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-600 mt-1 line-clamp-2 font-medium leading-relaxed">
+                            {notif.message}
+                          </p>
+                          {notif.time && (
+                            <div className="flex items-center gap-1 mt-1.5 text-[10px] text-slate-400 font-bold">
+                              <Clock className="w-3 h-3" />
+                              {notif.time?.toDate ? format(notif.time.toDate(), 'dd MMM, HH:mm น.') : (notif.dateStr || '')}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ));
+                  })()}
+                </div>
+
+                <div className="p-2.5 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between gap-2">
+                  <button 
+                    onClick={() => {
+                      setIsNotificationsOpen(false);
+                      setActiveView('appointments');
+                    }}
+                    className="flex-1 py-1.5 text-[10px] font-black text-[#00b4d8] bg-cyan-50 hover:bg-[#00b4d8] hover:text-white rounded-lg transition-all border border-cyan-100 text-center"
+                  >
+                    ดูการนัดหมายทั้งหมด (Appointment List)
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setIsNotificationsOpen(false);
+                      setActiveView('booking-requests');
+                    }}
+                    className="flex-1 py-1.5 text-[10px] font-black text-emerald-600 bg-emerald-50 hover:bg-emerald-500 hover:text-white rounded-lg transition-all border border-emerald-100 text-center"
+                  >
+                    ดูคำขอนัดออนไลน์
                   </button>
                 </div>
               </motion.div>
@@ -418,20 +545,6 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack }:
           </AnimatePresence>
         </div>
 
-        <button 
-          id="header-settings-btn"
-          onClick={() => {
-            if (activeView === 'pos') {
-              window.dispatchEvent(new CustomEvent('open-pos-settings'));
-            } else {
-              setActiveView('settings-product');
-            }
-          }}
-          className="p-2 hover:bg-slate-100 rounded-xl text-slate-500 transition-all hover:scale-105 active:scale-95"
-          title="ตั้งค่า"
-        >
-          <Settings className="w-5 h-5" />
-        </button>
       </div>
     </header>
   );

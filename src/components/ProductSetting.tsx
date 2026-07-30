@@ -18,7 +18,14 @@ import {
   Lock,
   AlertTriangle,
   RefreshCw,
-  CheckCircle2
+  CheckCircle2,
+  TrendingUp,
+  TrendingDown,
+  History,
+  Calendar,
+  DollarSign,
+  Clock,
+  BarChart3
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -110,7 +117,19 @@ export default function ProductSetting() {
   // Success Toast State
   const [toast, setToast] = useState<{ show: boolean; message: string }>({ show: false, message: '' });
 
+  // Purchase History Form State (Inside Edit Mode)
+  const [newPurchaseDate, setNewPurchaseDate] = useState(new Date().toISOString().split('T')[0]);
+  const [newPurchaseCost, setNewPurchaseCost] = useState<number | ''>('');
+  const [newPurchaseQty, setNewPurchaseQty] = useState<number | ''>('');
+  const [newPurchaseSupplier, setNewPurchaseSupplier] = useState('');
+  const [newPurchaseNote, setNewPurchaseNote] = useState('');
+
   const handleCreate = () => {
+    setNewPurchaseDate(new Date().toISOString().split('T')[0]);
+    setNewPurchaseCost('');
+    setNewPurchaseQty('');
+    setNewPurchaseSupplier('');
+    setNewPurchaseNote('');
     setEditingProduct({
       id: Math.random().toString(36).substr(2, 9),
       type: 'product',
@@ -131,6 +150,7 @@ export default function ProductSetting() {
       petTypes: [],
       printGroup: '',
       price: 0,
+      purchaseHistory: [],
       status: {
         appoint: { active: true, favorite: false },
         opd: { active: true, favorite: false },
@@ -163,6 +183,11 @@ export default function ProductSetting() {
   };
 
   const handleEdit = (product: Product) => {
+    setNewPurchaseDate(new Date().toISOString().split('T')[0]);
+    setNewPurchaseCost('');
+    setNewPurchaseQty('');
+    setNewPurchaseSupplier('');
+    setNewPurchaseNote('');
     setEditingProduct({
       id: product.id,
       name: product.name,
@@ -183,6 +208,7 @@ export default function ProductSetting() {
       petTypes: product.petTypes || [],
       printGroup: product.printGroup || '',
       price: product.price || 0,
+      purchaseHistory: product.purchaseHistory || [],
       status: product.status || {
         appoint: { active: true, favorite: false },
         opd: { active: true, favorite: false },
@@ -212,6 +238,96 @@ export default function ProductSetting() {
       }
     });
     setMode('edit');
+  };
+
+  const handleAddPurchaseRecord = () => {
+    if (!newPurchaseCost || Number(newPurchaseCost) <= 0) {
+      alert('กรุณาระบุราคาต้นทุนรับซื้อที่ถูกต้อง');
+      return;
+    }
+    const newRecord = {
+      id: Math.random().toString(36).substr(2, 9),
+      date: newPurchaseDate || new Date().toISOString().split('T')[0],
+      costPrice: Number(newPurchaseCost),
+      quantity: Number(newPurchaseQty) || 0,
+      supplier: newPurchaseSupplier || 'ไม่ระบุ',
+      note: newPurchaseNote || ''
+    };
+
+    const currentHistory = editingProduct?.purchaseHistory || [];
+    const updatedHistory = [...currentHistory, newRecord];
+
+    setEditingProduct({
+      ...editingProduct,
+      purchaseHistory: updatedHistory
+    });
+
+    setNewPurchaseCost('');
+    setNewPurchaseQty('');
+    setNewPurchaseSupplier('');
+    setNewPurchaseNote('');
+  };
+
+  const handleDeletePurchaseRecord = (recordId: string) => {
+    const currentHistory = editingProduct?.purchaseHistory || [];
+    const updatedHistory = currentHistory.filter((r: any) => r.id !== recordId);
+    setEditingProduct({
+      ...editingProduct,
+      purchaseHistory: updatedHistory
+    });
+  };
+
+  const getPurchaseAnalytics = (history: any[]) => {
+    if (!history || history.length === 0) {
+      return {
+        latestCost: 0,
+        prevCost: 0,
+        diffAmount: 0,
+        diffPercent: 0,
+        trend: 'none',
+        totalOrders: 0,
+        avgDaysBetweenOrders: 0,
+        lastOrderDate: '-'
+      };
+    }
+
+    const sorted = [...history].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const latest = sorted[sorted.length - 1];
+    const latestCost = Number(latest.costPrice || 0);
+
+    let prevCost = latestCost;
+    let diffAmount = 0;
+    let diffPercent = 0;
+    let trend = 'same';
+
+    if (sorted.length >= 2) {
+      const prev = sorted[sorted.length - 2];
+      prevCost = Number(prev.costPrice || 0);
+      diffAmount = latestCost - prevCost;
+      diffPercent = prevCost > 0 ? ((latestCost - prevCost) / prevCost) * 100 : 0;
+      if (diffAmount > 0) trend = 'up';
+      else if (diffAmount < 0) trend = 'down';
+      else trend = 'same';
+    }
+
+    let avgDaysBetweenOrders = 0;
+    if (sorted.length >= 2) {
+      const firstDate = new Date(sorted[0].date).getTime();
+      const lastDate = new Date(sorted[sorted.length - 1].date).getTime();
+      const totalDays = Math.max(1, Math.round((lastDate - firstDate) / (1000 * 60 * 60 * 24)));
+      avgDaysBetweenOrders = Math.round(totalDays / (sorted.length - 1));
+    }
+
+    return {
+      latestCost,
+      prevCost,
+      diffAmount,
+      diffPercent,
+      trend,
+      totalOrders: sorted.length,
+      avgDaysBetweenOrders,
+      lastOrderDate: latest.date
+    };
   };
 
   const handleSave = async () => {
@@ -1114,6 +1230,319 @@ export default function ProductSetting() {
               </div>
             </div>
           </div>
+
+          <div className="h-px bg-slate-100" />
+
+          {/* Purchase History & Order Frequency Section */}
+          {(() => {
+            const analytics = getPurchaseAnalytics(editingProduct?.purchaseHistory || []);
+            const historyList = editingProduct?.purchaseHistory || [];
+
+            return (
+              <div className="space-y-8">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-cyan-50 rounded-xl text-[#00b4d8]">
+                        <History className="w-5 h-5" />
+                      </div>
+                      <h3 className="text-lg font-black text-slate-800">
+                        ประวัติการรับซื้อ & วิเคราะห์ความถี่ในการสั่งซื้อ
+                      </h3>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1 pl-10">
+                      บันทึกราคาต้นทุนที่รับซื้อยาล่าสุดและย้อนหลัง พร้อมวิเคราะห์แนวโน้มราคาและรอบความถี่ในการสั่งยา
+                    </p>
+                  </div>
+                </div>
+
+                {/* Summary Analytics Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {/* Card 1: Latest Cost Price & Trend */}
+                  <div className="bg-slate-50/70 rounded-2xl p-5 border border-slate-100 space-y-2">
+                    <div className="flex items-center justify-between text-slate-500">
+                      <span className="text-xs font-bold flex items-center gap-1.5">
+                        <DollarSign className="w-4 h-4 text-[#00b4d8]" />
+                        ราคาต้นทุนล่าสุด
+                      </span>
+                      {analytics.trend === 'up' && (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-black px-2 py-0.5 rounded-full bg-red-100 text-red-600">
+                          <TrendingUp className="w-3.5 h-3.5" />
+                          +{analytics.diffPercent.toFixed(1)}%
+                        </span>
+                      )}
+                      {analytics.trend === 'down' && (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-600">
+                          <TrendingDown className="w-3.5 h-3.5" />
+                          {analytics.diffPercent.toFixed(1)}%
+                        </span>
+                      )}
+                      {analytics.trend === 'same' && historyList.length > 0 && (
+                        <span className="text-[11px] font-black px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">
+                          เท่าเดิม
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-2xl font-black text-slate-800">
+                        ฿{analytics.latestCost.toLocaleString()}
+                      </span>
+                      <span className="text-xs font-bold text-slate-400">/ {editingProduct.unit || 'หน่วย'}</span>
+                    </div>
+                    {analytics.trend !== 'none' && historyList.length >= 2 && (
+                      <p className="text-[11px] font-bold text-slate-500">
+                        {analytics.diffAmount > 0 
+                          ? `เพิ่มขึ้น ฿${analytics.diffAmount.toLocaleString()} จากครั้งก่อน (฿${analytics.prevCost.toLocaleString()})`
+                          : analytics.diffAmount < 0 
+                          ? `ลดลง ฿${Math.abs(analytics.diffAmount).toLocaleString()} จากครั้งก่อน (฿${analytics.prevCost.toLocaleString()})`
+                          : `คงที่เท่ากับครั้งก่อน (฿${analytics.prevCost.toLocaleString()})`}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Card 2: Price Trend Status */}
+                  <div className="bg-slate-50/70 rounded-2xl p-5 border border-slate-100 space-y-2">
+                    <div className="text-xs font-bold text-slate-500 flex items-center gap-1.5">
+                      <BarChart3 className="w-4 h-4 text-purple-500" />
+                      วิเคราะห์แนวโน้มราคา
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {analytics.trend === 'up' && (
+                        <span className="text-base font-black text-red-500 flex items-center gap-1">
+                          🔴 แนวโน้มปรับตัวขึ้น
+                        </span>
+                      )}
+                      {analytics.trend === 'down' && (
+                        <span className="text-base font-black text-emerald-600 flex items-center gap-1">
+                          🟢 แนวโน้มปรับตัวลง (ต้นทุนลด)
+                        </span>
+                      )}
+                      {(analytics.trend === 'same' || analytics.trend === 'none') && (
+                        <span className="text-base font-black text-slate-600">
+                          ⚪ ราคาทรงตัว
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] font-bold text-slate-400">
+                      {historyList.length > 0 
+                        ? `อิงจากบันทึกรับซื้อย้อนหลัง ${historyList.length} รายการ`
+                        : 'ยังไม่มีประวัติการบันทึกราคา'}
+                    </p>
+                  </div>
+
+                  {/* Card 3: Order Frequency Analysis */}
+                  <div className="bg-slate-50/70 rounded-2xl p-5 border border-slate-100 space-y-2">
+                    <div className="text-xs font-bold text-slate-500 flex items-center gap-1.5">
+                      <Clock className="w-4 h-4 text-amber-500" />
+                      ความถี่ในการสั่งยา
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-2xl font-black text-slate-800">
+                        {analytics.avgDaysBetweenOrders > 0 
+                          ? `ทุกๆ ${analytics.avgDaysBetweenOrders} วัน`
+                          : analytics.totalOrders > 0 
+                          ? 'สั่งซื้อ 1 ครั้ง' 
+                          : '-'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-bold text-slate-400 flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      {analytics.totalOrders > 0 
+                        ? `รับสั่งยาล่าสุดเมื่อ: ${analytics.lastOrderDate} (รวม ${analytics.totalOrders} สั่งซื้อ)`
+                        : 'ยังไม่มีการสั่งซื้อ'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Form to Add New Purchase Record */}
+                <div className="bg-white rounded-2xl p-6 border border-cyan-100 bg-cyan-50/20 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                      <Plus className="w-4 h-4 text-[#00b4d8]" />
+                      เพิ่มบันทึกราคารับซื้อยา (New Purchase Record)
+                    </h4>
+                    <span className="text-xs font-bold text-[#00b4d8]">
+                      * บันทึกเพื่ออัปเดตประวัติและวิเคราะห์แนวโน้ม
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">วันที่รับซื้อ</label>
+                      <input 
+                        type="date"
+                        value={newPurchaseDate}
+                        onChange={(e) => setNewPurchaseDate(e.target.value)}
+                        className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#00b4d8]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">ราคาต้นทุนรับซื้อ/หน่วย (บาท)</label>
+                      <input 
+                        type="number"
+                        placeholder="เช่น 150"
+                        value={newPurchaseCost}
+                        onChange={(e) => setNewPurchaseCost(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                        className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#00b4d8]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">จำนวนที่สั่ง/รับเข้า</label>
+                      <input 
+                        type="number"
+                        placeholder="เช่น 100"
+                        value={newPurchaseQty}
+                        onChange={(e) => setNewPurchaseQty(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                        className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#00b4d8]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">บริษัท / ผู้จัดจำหน่าย</label>
+                      <input 
+                        type="text"
+                        placeholder="เช่น บริษัท ยาไทย จำกัด"
+                        value={newPurchaseSupplier}
+                        onChange={(e) => setNewPurchaseSupplier(e.target.value)}
+                        className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#00b4d8]"
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <button 
+                        onClick={handleAddPurchaseRecord}
+                        className="w-full py-2.5 bg-[#00b4d8] text-white rounded-xl font-bold text-xs hover:bg-[#0096b1] transition-all flex items-center justify-center gap-1.5 shadow-md shadow-cyan-100"
+                      >
+                        <Plus className="w-4 h-4" />
+                        + บันทึกรับซื้อ
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Purchase Records Table */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-black text-slate-800">
+                      ตารางประวัติการรับซื้อย้อนหลัง ({historyList.length} รายการ)
+                    </h4>
+                    {historyList.length === 0 && (
+                      <button 
+                        onClick={() => {
+                          const today = new Date();
+                          const d1 = new Date(today.getTime() - 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                          const d2 = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                          const d3 = today.toISOString().split('T')[0];
+                          setEditingProduct({
+                            ...editingProduct,
+                            purchaseHistory: [
+                              { id: 'sample-1', date: d1, costPrice: 120, quantity: 50, supplier: 'บริษัท สัตว์แพทย์จำกัด', note: 'ลอตเริ่มต้น' },
+                              { id: 'sample-2', date: d2, costPrice: 125, quantity: 50, supplier: 'บริษัท สัตว์แพทย์จำกัด', note: 'ราคาขึ้นเล็กน้อย' },
+                              { id: 'sample-3', date: d3, costPrice: 130, quantity: 100, supplier: 'บริษัท สัตว์แพทย์จำกัด', note: 'ลอตล่าสุด' }
+                            ]
+                          });
+                        }}
+                        className="text-xs font-bold text-[#00b4d8] hover:underline"
+                      >
+                        + ใส่ประวัติการสั่งซื้อตัวอย่าง
+                      </button>
+                    )}
+                  </div>
+
+                  {historyList.length === 0 ? (
+                    <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                      <History className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                      <p className="text-xs font-bold text-slate-500">ยังไม่มีประวัติการรับซื้อยาสำหรับรายการนี้</p>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        กรอกข้อมูลในฟอร์มด้านบนเพื่อเพิ่มบันทึกราคารับซื้อแรก
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-2xl border border-slate-100">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-100">
+                          <tr>
+                            <th className="p-3">วันที่รับซื้อ</th>
+                            <th className="p-3">ราคาต้นทุน/หน่วย</th>
+                            <th className="p-3">จำนวนที่รับเข้า</th>
+                            <th className="p-3">บริษัทผู้จัดจำหน่าย</th>
+                            <th className="p-3 text-center">แนวโน้มราคา</th>
+                            <th className="p-3 text-right">จัดการ</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                          {[...historyList]
+                            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                            .map((rec: any, idx: number, arr: any[]) => {
+                              const prevRec = arr[idx + 1];
+                              let diffBadge = null;
+                              if (prevRec) {
+                                const diff = rec.costPrice - prevRec.costPrice;
+                                if (diff > 0) {
+                                  diffBadge = (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-red-100 text-red-600">
+                                      <TrendingUp className="w-3 h-3" />
+                                      +฿{diff}
+                                    </span>
+                                  );
+                                } else if (diff < 0) {
+                                  diffBadge = (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-600">
+                                      <TrendingDown className="w-3 h-3" />
+                                      -฿{Math.abs(diff)}
+                                    </span>
+                                  );
+                                } else {
+                                  diffBadge = (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500">
+                                      เท่าเดิม
+                                    </span>
+                                  );
+                                }
+                              } else {
+                                diffBadge = (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-500">
+                                    ครั้งแรก
+                                  </span>
+                                );
+                              }
+
+                              return (
+                                <tr key={rec.id} className="hover:bg-slate-50/80 transition-colors">
+                                  <td className="p-3 font-bold text-slate-800 flex items-center gap-2">
+                                    <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                                    {rec.date}
+                                  </td>
+                                  <td className="p-3 font-black text-slate-800">
+                                    ฿{Number(rec.costPrice).toLocaleString()}
+                                  </td>
+                                  <td className="p-3 font-bold text-slate-600">
+                                    {rec.quantity} {editingProduct.unit || 'หน่วย'}
+                                  </td>
+                                  <td className="p-3 text-slate-600">
+                                    {rec.supplier || '-'}
+                                  </td>
+                                  <td className="p-3 text-center">
+                                    {diffBadge}
+                                  </td>
+                                  <td className="p-3 text-right">
+                                    <button 
+                                      onClick={() => handleDeletePurchaseRecord(rec.id)}
+                                      className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                                      title="ลบรายการ"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Success Toast */}

@@ -5,6 +5,10 @@ import {
   Calendar, 
   LayoutGrid,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CalendarDays,
+  History,
   CheckCircle2,
   Clock,
   ArrowRight,
@@ -71,6 +75,40 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
   const [selectedAppointmentForEdit, setSelectedAppointmentForEdit] = useState<Appointment | null>(null);
   const [viewingStatusList, setViewingStatusList] = useState<string | null>(null);
   const [appointmentToDelete, setAppointmentToDelete] = useState<Appointment | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
+  const [isHistoryMode, setIsHistoryMode] = useState<boolean>(false);
+
+  const handlePrevDay = () => {
+    const cur = new Date(selectedDate + 'T00:00:00');
+    cur.setDate(cur.getDate() - 1);
+    setSelectedDate(format(cur, 'yyyy-MM-dd'));
+  };
+
+  const handleNextDay = () => {
+    const cur = new Date(selectedDate + 'T00:00:00');
+    cur.setDate(cur.getDate() + 1);
+    setSelectedDate(format(cur, 'yyyy-MM-dd'));
+  };
+
+  const handleToday = () => {
+    setSelectedDate(format(new Date(), 'yyyy-MM-dd'));
+  };
+
+  const getApptDateStr = (appt: Appointment): string => {
+    if (appt.startTime?.toDate) {
+      return format(appt.startTime.toDate(), 'yyyy-MM-dd');
+    }
+    if (appt.startTime) {
+      const d = new Date(appt.startTime);
+      if (!isNaN(d.getTime())) {
+        return format(d, 'yyyy-MM-dd');
+      }
+    }
+    if ((appt as any).date) {
+      return (appt as any).date;
+    }
+    return '';
+  };
 
   const handleDeleteAppointment = async (apptId: string) => {
     try {
@@ -193,114 +231,305 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
   const rescheduledApps = appointments.filter(app => app.status === 'rescheduled');
   const noShowApps = appointments.filter(app => app.status === 'no-show');
 
+  // Filtered list based on selected Date, history mode, search query, and status
+  const displayedAppointments = appointments.filter(appt => {
+    const apptDateStr = getApptDateStr(appt);
+
+    // If not in history mode, filter by selected date
+    if (!isHistoryMode) {
+      if (apptDateStr && apptDateStr !== selectedDate) {
+        return false;
+      }
+    }
+
+    // Filter by quick status tags if active
+    if (viewingStatusList) {
+      if (appt.status !== viewingStatusList) return false;
+    }
+
+    // Search query filter
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const pName = (appt.patientName || '').toLowerCase();
+      const oName = (appt.ownerName || '').toLowerCase();
+      const act = (appt.serviceType || appt.activities || '').toLowerCase();
+      const notes = (appt.notes || '').toLowerCase();
+      return pName.includes(q) || oName.includes(q) || act.includes(q) || notes.includes(q) || apptDateStr.includes(q);
+    }
+
+    return true;
+  });
+
   return (
     <div className="space-y-8">
       {/* Top Action Buttons */}
-      <div className="flex justify-end gap-2">
-        <button 
-          onClick={() => setIsEditingMode(!isEditingMode)}
-          className={cn(
-            "flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all text-sm shadow-sm",
-            isEditingMode 
-              ? "bg-rose-600 text-white hover:bg-rose-700" 
-              : "bg-white text-slate-700 hover:bg-slate-50 border border-slate-200"
-          )}
-        >
-          <Edit className="w-4 h-4" />
-          {isEditingMode ? 'เสร็จสิ้น' : 'แก้ไขรายการ'}
-        </button>
-        <button 
-          onClick={() => setIsAddAppointmentModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700 transition-all text-sm shadow-sm"
-        >
-          <Plus className="w-4 h-4" />
-          New Appointment
-        </button>
-        <button 
-          onClick={() => setIsAddPatientModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-[#d4d700] text-slate-800 rounded-lg font-bold hover:bg-[#eeef20] transition-all text-sm shadow-sm"
-        >
-          <Plus className="w-4 h-4" />
-          New Pet
-        </button>
-        <button 
-          onClick={() => setActiveView('calendar')}
-          className="flex items-center gap-2 px-4 py-2 bg-[#52b788] text-white rounded-lg font-bold hover:bg-[#40916c] transition-all text-sm shadow-sm"
-        >
-          <Calendar className="w-4 h-4" />
-          Calendar
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-black text-slate-800 tracking-tight">Appointment List</h2>
+          <p className="text-xs font-bold text-slate-400 mt-0.5">ระบบจัดการและตรวจสอบรายการนัดหมายสัตว์เลี้ยง</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button 
+            onClick={() => setIsEditingMode(!isEditingMode)}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-xl font-bold transition-all text-sm shadow-sm border",
+              isEditingMode 
+                ? "bg-rose-600 text-white border-rose-600 hover:bg-rose-700" 
+                : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+            )}
+          >
+            <Edit className="w-4 h-4" />
+            {isEditingMode ? 'เสร็จสิ้นการแก้ไข' : 'แก้ไข/จัดการรายการ'}
+          </button>
+          <button 
+            onClick={() => setIsAddAppointmentModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all text-sm shadow-sm"
+          >
+            <Plus className="w-4 h-4" />
+            New Appointment
+          </button>
+          <button 
+            onClick={() => setIsAddPatientModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-[#d4d700] text-slate-800 rounded-xl font-bold hover:bg-[#eeef20] transition-all text-sm shadow-sm"
+          >
+            <Plus className="w-4 h-4" />
+            New Pet
+          </button>
+          <button 
+            onClick={() => setActiveView('calendar')}
+            className="flex items-center gap-2 px-4 py-2 bg-[#52b788] text-white rounded-xl font-bold hover:bg-[#40916c] transition-all text-sm shadow-sm"
+          >
+            <Calendar className="w-4 h-4" />
+            Calendar
+          </button>
+        </div>
       </div>
 
       <div className="space-y-6">
-        <h2 className="text-xl font-black text-slate-800">Appointment List</h2>
-        
-        {/* Today List Section */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-          <div className="p-6 border-b border-slate-50 flex items-center justify-between">
-            <h3 className="text-lg font-black text-slate-800">Today List {appointments.length}</h3>
-            <div className="flex items-center gap-3">
+        {/* Navigation & Controls Bar */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
+            {/* Mode Switcher Tabs */}
+            <div className="flex items-center gap-2 bg-slate-100/80 p-1 rounded-xl">
+              <button
+                onClick={() => {
+                  setIsHistoryMode(false);
+                  setViewingStatusList(null);
+                }}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                  !isHistoryMode 
+                    ? "bg-white text-indigo-600 shadow-sm font-black" 
+                    : "text-slate-500 hover:text-slate-800"
+                )}
+              >
+                <CalendarDays className="w-4 h-4" />
+                <span>นัดหมายตามวัน (Daily View)</span>
+              </button>
+              <button
+                onClick={() => {
+                  setIsHistoryMode(true);
+                  setViewingStatusList(null);
+                }}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                  isHistoryMode 
+                    ? "bg-white text-indigo-600 shadow-sm font-black" 
+                    : "text-slate-500 hover:text-slate-800"
+                )}
+              >
+                <History className="w-4 h-4" />
+                <span>ประวัติย้อนหลังทั้งหมด (All History)</span>
+              </button>
+            </div>
+
+            {/* Date Selector (for Daily View) */}
+            {!isHistoryMode && (
+              <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-xl border border-slate-200/80">
+                <button 
+                  onClick={handlePrevDay}
+                  className="p-1.5 hover:bg-white text-slate-600 rounded-lg transition-all shadow-xs border border-transparent hover:border-slate-200"
+                  title="วันก่อนหน้า"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+
+                <div className="flex items-center gap-2 px-2">
+                  <Calendar className="w-4 h-4 text-indigo-500" />
+                  <input 
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    className="bg-transparent font-black text-slate-700 text-xs outline-none cursor-pointer"
+                  />
+                  <span className="text-xs font-black text-slate-800 hidden sm:inline-block">
+                    {(() => {
+                      try {
+                        return format(new Date(selectedDate + 'T00:00:00'), 'dd MMMM yyyy');
+                      } catch {
+                        return selectedDate;
+                      }
+                    })()}
+                  </span>
+                </div>
+
+                <button 
+                  onClick={handleNextDay}
+                  className="p-1.5 hover:bg-white text-slate-600 rounded-lg transition-all shadow-xs border border-transparent hover:border-slate-200"
+                  title="วันถัดไป"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+
+                {selectedDate !== format(new Date(), 'yyyy-MM-dd') && (
+                  <button
+                    onClick={handleToday}
+                    className="px-2.5 py-1 text-[11px] font-bold bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-lg transition-all ml-1 border border-indigo-100"
+                  >
+                    วันนี้
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Search & Quick Filter Tags */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="relative flex-1 min-w-[240px]">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="ค้นหาชื่อสัตว์เลี้ยง, เจ้าของ, ชนิดบริการ, หมายเหตุ..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:bg-white transition-all"
+              />
+              {searchQuery && (
+                <button 
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              {viewingStatusList && (
+                <button
+                  onClick={() => setViewingStatusList(null)}
+                  className="px-2.5 py-1 text-[11px] font-bold bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 flex items-center gap-1"
+                >
+                  <X className="w-3 h-3" />
+                  <span>แสดงทั้งหมด</span>
+                </button>
+              )}
               <button 
-                onClick={() => setViewingStatusList('rescheduled')}
-                className="flex items-center gap-2 px-3 py-1.5 bg-purple-50 text-purple-600 rounded-xl border border-purple-100 hover:bg-purple-100 transition-all"
+                onClick={() => setViewingStatusList(viewingStatusList === 'rescheduled' ? null : 'rescheduled')}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all text-[10px] font-black uppercase tracking-wider",
+                  viewingStatusList === 'rescheduled'
+                    ? "bg-purple-600 text-white border-purple-600 shadow-sm"
+                    : "bg-purple-50 text-purple-600 border-purple-100 hover:bg-purple-100"
+                )}
               >
                 <Clock className="w-3 h-3" />
-                <span className="text-[10px] font-black uppercase tracking-widest">เลื่อนนัด: {rescheduledApps.length}</span>
+                <span>เลื่อนนัด: {rescheduledApps.length}</span>
               </button>
               <button 
-                onClick={() => setViewingStatusList('no-show')}
-                className="flex items-center gap-2 px-3 py-1.5 bg-rose-50 text-rose-600 rounded-xl border border-rose-100 hover:bg-rose-100 transition-all"
+                onClick={() => setViewingStatusList(viewingStatusList === 'no-show' ? null : 'no-show')}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all text-[10px] font-black uppercase tracking-wider",
+                  viewingStatusList === 'no-show'
+                    ? "bg-rose-600 text-white border-rose-600 shadow-sm"
+                    : "bg-rose-50 text-rose-600 border-rose-100 hover:bg-rose-100"
+                )}
               >
                 <XCircle className="w-3 h-3" />
-                <span className="text-[10px] font-black uppercase tracking-widest">ไม่มา: {noShowApps.length}</span>
+                <span>ไม่มา: {noShowApps.length}</span>
               </button>
+            </div>
+          </div>
+        </div>
+
+        {/* List Card Section */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+          <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+            <div className="flex items-center gap-3">
+              <h3 className="text-base font-black text-slate-800">
+                {isHistoryMode ? (
+                  <span>ประวัตินัดหมายทั้งหมด (All Appointments)</span>
+                ) : (
+                  <span>
+                    รายการนัดหมายประจำวันที่ {(() => {
+                      try {
+                        return format(new Date(selectedDate + 'T00:00:00'), 'dd MMMM yyyy');
+                      } catch {
+                        return selectedDate;
+                      }
+                    })()}
+                  </span>
+                )}
+              </h3>
+              <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 font-bold text-xs rounded-full">
+                {displayedAppointments.length} รายการ
+              </span>
             </div>
           </div>
           
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
-              <thead className="bg-slate-50/50">
+              <thead className="bg-slate-50/80 border-b border-slate-100">
                 <tr>
-                  <th className="px-8 py-4 font-bold text-slate-400 uppercase tracking-wider">
-                    <div className="flex items-center gap-1">Time <ArrowRight className="w-3 h-3 rotate-[-45deg]" /></div>
+                  <th className="px-6 py-3.5 font-bold text-slate-400 uppercase tracking-wider text-xs">
+                    <div className="flex items-center gap-1">วันที่ & เวลา <ArrowRight className="w-3 h-3 rotate-[-45deg]" /></div>
                   </th>
-                  <th className="px-8 py-4 font-bold text-slate-400 uppercase tracking-wider">
-                    <div className="flex items-center gap-1">Pet <ArrowRight className="w-3 h-3 rotate-[-45deg]" /></div>
+                  <th className="px-6 py-3.5 font-bold text-slate-400 uppercase tracking-wider text-xs">
+                    <div className="flex items-center gap-1">สัตว์เลี้ยง (Pet) <ArrowRight className="w-3 h-3 rotate-[-45deg]" /></div>
                   </th>
-                  <th className="px-8 py-4 font-bold text-slate-400 uppercase tracking-wider">
-                    <div className="flex items-center gap-1">Activities <ArrowRight className="w-3 h-3 rotate-[-45deg]" /></div>
+                  <th className="px-6 py-3.5 font-bold text-slate-400 uppercase tracking-wider text-xs">
+                    <div className="flex items-center gap-1">กิจกรรม/บริการ <ArrowRight className="w-3 h-3 rotate-[-45deg]" /></div>
                   </th>
-                  <th className="px-8 py-4 font-bold text-slate-400 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 font-bold text-slate-400 uppercase tracking-wider text-xs">
                     <div className="flex items-center gap-1">Visit Type <ArrowRight className="w-3 h-3 rotate-[-45deg]" /></div>
                   </th>
-                  <th className="px-8 py-4 font-bold text-slate-400 uppercase tracking-wider">
-                    <div className="flex items-center gap-1">Status <ArrowRight className="w-3 h-3 rotate-[-45deg]" /></div>
+                  <th className="px-6 py-3.5 font-bold text-slate-400 uppercase tracking-wider text-xs">
+                    <div className="flex items-center gap-1">สถานะ (Status) <ArrowRight className="w-3 h-3 rotate-[-45deg]" /></div>
                   </th>
-                  <th className="px-8 py-4 font-bold text-slate-400 uppercase tracking-wider text-center">Mark Done</th>
+                  <th className="px-6 py-3.5 font-bold text-slate-400 uppercase tracking-wider text-xs text-center">จบงาน/ส่งห้อง</th>
                   {isEditingMode && (
-                    <th className="px-8 py-4 font-bold text-slate-400 uppercase tracking-wider text-center bg-rose-50/30">Actions / จัดการ</th>
+                    <th className="px-6 py-3.5 font-bold text-slate-400 uppercase tracking-wider text-xs text-center bg-rose-50/30">Actions / จัดการ</th>
                   )}
                 </tr>
               </thead>
               <tbody>
-                {appointments.length > 0 ? (
-                  appointments.map((appt, index) => (
-                    <tr key={`appt-${appt.id}-${index}`} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                      <td className="px-8 py-4 font-bold text-slate-600">
-                        {appt.startTime?.toDate ? format(appt.startTime.toDate(), 'hh:mm a') : format(new Date(appt.startTime), 'hh:mm a')}
+                {displayedAppointments.length > 0 ? (
+                  displayedAppointments.map((appt, index) => (
+                    <tr key={`appt-${appt.id}-${index}`} className="border-b border-slate-50 hover:bg-slate-50/60 transition-colors">
+                      <td className="px-6 py-4 font-bold text-slate-600">
+                        <div className="flex flex-col">
+                          <span className="text-slate-800 font-bold">
+                            {appt.startTime?.toDate ? format(appt.startTime.toDate(), 'hh:mm a') : format(new Date(appt.startTime), 'hh:mm a')}
+                          </span>
+                          <span className="text-[10px] font-semibold text-slate-400">
+                            {getApptDateStr(appt)}
+                          </span>
+                        </div>
                       </td>
-                      <td className="px-8 py-4">
+                      <td className="px-6 py-4">
                         <div className="font-black text-slate-800">{appt.patientName}</div>
+                        {appt.ownerName && <div className="text-[11px] font-medium text-slate-400">เจ้าของ: {appt.ownerName}</div>}
                       </td>
-                      <td className="px-8 py-4 font-bold text-slate-500">
+                      <td className="px-6 py-4 font-bold text-slate-600">
                         {appt.serviceType || appt.activities || '-'}
+                        {appt.notes && <div className="text-[11px] font-normal text-slate-400 line-clamp-1">{appt.notes}</div>}
                       </td>
-                      <td className="px-8 py-4">
-                        <div className="flex items-center gap-2">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-1.5">
                           <button 
                             onClick={() => handleUpdateVisitType(appt.id, 'OPD')}
                             className={cn(
-                              "px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                              "px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
                               appt.visitType === 'OPD' 
                                 ? "bg-indigo-600 text-white shadow-md shadow-indigo-100" 
                                 : "bg-slate-100 text-slate-400 hover:bg-slate-200"
@@ -311,7 +540,7 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
                           <button 
                             onClick={() => handleUpdateVisitType(appt.id, 'IPD')}
                             className={cn(
-                              "px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                              "px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
                               appt.visitType === 'IPD' 
                                 ? "bg-amber-500 text-white shadow-md shadow-amber-100" 
                                 : "bg-slate-100 text-slate-400 hover:bg-slate-200"
@@ -321,18 +550,18 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
                           </button>
                         </div>
                       </td>
-                      <td className="px-8 py-4">
+                      <td className="px-6 py-4">
                         <select
                           value={appt.status}
                           onChange={(e) => handleUpdateStatus(appt.id, e.target.value, appt)}
                           className={cn(
-                            "text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full outline-none border-none cursor-pointer",
-                            appt.status === 'completed' ? "bg-emerald-100 text-emerald-600" :
-                            appt.status === 'confirmed' ? "bg-blue-100 text-blue-600" :
-                            appt.status === 'pending' ? "bg-amber-100 text-amber-600" :
-                            appt.status === 'rescheduled' ? "bg-purple-100 text-purple-600" :
-                            appt.status === 'no-show' ? "bg-rose-100 text-rose-600" :
-                            "bg-slate-100 text-slate-600"
+                            "text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full outline-none border cursor-pointer",
+                            appt.status === 'completed' ? "bg-emerald-50 text-emerald-600 border-emerald-200" :
+                            appt.status === 'confirmed' ? "bg-blue-50 text-blue-600 border-blue-200" :
+                            appt.status === 'pending' ? "bg-amber-50 text-amber-600 border-amber-200" :
+                            appt.status === 'rescheduled' ? "bg-purple-50 text-purple-600 border-purple-200" :
+                            appt.status === 'no-show' ? "bg-rose-50 text-rose-600 border-rose-200" :
+                            "bg-slate-100 text-slate-600 border-slate-200"
                           )}
                         >
                           <option value="pending">Pending</option>
@@ -342,64 +571,64 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
                           <option value="completed">Completed</option>
                         </select>
                       </td>
-                      <td className="px-8 py-4 text-center">
+                      <td className="px-6 py-4 text-center">
                         {(appt.serviceType?.toLowerCase().includes('bathing') || appt.activities?.toLowerCase().includes('bathing')) ? (
                           <button 
                             onClick={() => {
                               localStorage.setItem('bookingActiveTab', 'bathing');
                               setActiveView('public-booking');
                             }}
-                            className="px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 mx-auto bg-sky-500 hover:bg-sky-600 text-white shadow-lg shadow-sky-100"
+                            className="px-3 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-1.5 mx-auto bg-sky-500 hover:bg-sky-600 text-white shadow-md shadow-sky-100"
                           >
-                            <ExternalLink className="w-4 h-4" />
+                            <ExternalLink className="w-3.5 h-3.5" />
                             Go to BATHING ROOM
                           </button>
                         ) : appt.visitType === 'OPD' ? (
                           <button 
                             onClick={() => handleGoToOPD(appt)}
-                            className="px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 mx-auto bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-100"
+                            className="px-3 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-1.5 mx-auto bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-100"
                           >
-                            <ExternalLink className="w-4 h-4" />
+                            <ExternalLink className="w-3.5 h-3.5" />
                             Go to OPD
                           </button>
                         ) : appt.visitType === 'IPD' ? (
                           <button 
                             onClick={() => handleGoToIPD(appt)}
-                            className="px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 mx-auto bg-amber-500 hover:bg-amber-600 text-white shadow-lg shadow-amber-100"
+                            className="px-3 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-1.5 mx-auto bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-100"
                           >
-                            <ExternalLink className="w-4 h-4" />
+                            <ExternalLink className="w-3.5 h-3.5" />
                             Go to IPD
                           </button>
                         ) : (
                           <button 
                             disabled={true}
                             title="กรุณาเลือกประเภท OPD/IPD ก่อนจบงาน"
-                            className="px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 mx-auto bg-slate-50 text-slate-300 border border-slate-100 cursor-not-allowed"
+                            className="px-3 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-1.5 mx-auto bg-slate-50 text-slate-300 border border-slate-100 cursor-not-allowed"
                           >
-                            <CheckCircle2 className="w-4 h-4" />
+                            <CheckCircle2 className="w-3.5 h-3.5" />
                             Finish Work
                           </button>
                         )}
                       </td>
                       {isEditingMode && (
-                        <td className="px-8 py-4 text-center bg-rose-50/10">
+                        <td className="px-6 py-4 text-center bg-rose-50/10">
                           <div className="flex items-center justify-center gap-2">
                             <button
                               onClick={() => {
                                 setSelectedAppointmentForEdit(appt);
                                 setIsEditModalOpen(true);
                               }}
-                              className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl transition-all flex items-center justify-center border border-indigo-100"
+                              className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg transition-all flex items-center justify-center border border-indigo-100"
                               title="แก้ไขข้อมูล"
                             >
-                              <Edit className="w-4 h-4" />
+                              <Edit className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => setAppointmentToDelete(appt)}
-                              className="p-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl transition-all flex items-center justify-center border border-rose-100"
+                              className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition-all flex items-center justify-center border border-rose-100"
                               title="ลบรายการ"
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         </td>
@@ -408,17 +637,14 @@ export default function Appointments({ setActiveView }: AppointmentsProps) {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={isEditingMode ? 7 : 6} className="px-8 py-24 text-center">
-                      <div className="flex flex-col items-center gap-4">
-                        <div className="relative w-80 h-80 opacity-60">
-                          <img 
-                            src="https://www.vremind.co/img/no-result-01.c13dbe37.png" 
-                            alt="No Appointments"
-                            className="w-full h-full object-contain"
-                            referrerPolicy="no-referrer"
-                          />
+                    <td colSpan={isEditingMode ? 7 : 6} className="px-8 py-16 text-center">
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center text-slate-300">
+                          <Calendar className="w-10 h-10" />
                         </div>
-                        <p className="text-2xl font-bold text-slate-300">ไม่มีรายการนัดหมายวันนี้</p>
+                        <p className="text-base font-bold text-slate-400">
+                          {isHistoryMode ? 'ไม่พบรายการนัดหมายในประวัติ' : `ไม่มีรายการนัดหมายประจำวันที่ ${selectedDate}`}
+                        </p>
                       </div>
                     </td>
                   </tr>

@@ -31,7 +31,9 @@ import {
   AlertCircle,
   Clock,
   GripVertical,
-  Lock
+  Lock,
+  Settings,
+  Pencil
 } from 'lucide-react';
 import { 
   db, 
@@ -1779,12 +1781,13 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
             <button 
               onClick={() => setIsEditMode(!isEditMode)}
               className={cn(
-                "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all border shadow-sm",
+                "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all border shadow-sm flex items-center gap-1.5",
                 isEditMode 
                   ? "bg-rose-500 text-white border-rose-500 shadow-rose-100" 
-                  : "bg-white text-slate-400 border-slate-200 hover:border-slate-300"
+                  : "bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:bg-slate-50"
               )}
             >
+              <Pencil className={cn("w-3.5 h-3.5", isEditMode && "animate-bounce")} />
               {isEditMode ? 'Exit Edit Mode' : 'Edit Mode'}
             </button>
           </div>
@@ -1889,28 +1892,30 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                         </button>
 
                         {isEditMode && (
-                          <>
+                          <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-slate-200">
                             <button 
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleEditRecord(record);
                               }}
-                              className="p-2 text-slate-400 hover:text-[#00b4d8] hover:bg-cyan-50 rounded-lg transition-all"
-                              title="Edit Record"
+                              className="px-2.5 py-1 text-xs font-bold text-[#00b4d8] bg-cyan-50 hover:bg-[#00b4d8] hover:text-white rounded-lg transition-all border border-cyan-100 flex items-center gap-1"
+                              title="แก้ไขข้อมูล OPD Record"
                             >
-                              <MoreHorizontal className="w-4 h-4" />
+                              <Pencil className="w-3.5 h-3.5" />
+                              <span>แก้ไข</span>
                             </button>
                             <button 
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setIsDeleting(record.id);
                               }}
-                              className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
-                              title="Delete Record"
+                              className="px-2.5 py-1 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-500 hover:text-white rounded-lg transition-all border border-red-100 flex items-center gap-1"
+                              title="ลบรายการ OPD Record"
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>ลบ</span>
                             </button>
-                          </>
+                          </div>
                         )}
                       </div>
                     </td>

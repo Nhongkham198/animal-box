@@ -159,8 +159,20 @@ export default function Inventory() {
     return matchesSearch && matchesCategory;
   });
 
+  const getItemPrice = (item: InventoryItem): number => {
+    if (typeof item.unitPrice === 'number' && item.unitPrice > 0) return item.unitPrice;
+    if (typeof (item as any).price === 'number' && (item as any).price > 0) return (item as any).price;
+    if (item.unit && !isNaN(Number(item.unit)) && Number(item.unit) > 0) return Number(item.unit);
+    return 0;
+  };
+
+  const getItemUnit = (item: InventoryItem): string => {
+    if (item.unit && isNaN(Number(item.unit))) return item.unit;
+    return 'unit';
+  };
+
   const lowStockCount = items.filter(i => (i.currentStock || 0) <= (i.minStock || 0)).length;
-  const totalValue = items.reduce((acc, item) => acc + ((item.currentStock || 0) * (item.unitPrice || 0)), 0);
+  const totalValue = items.reduce((acc, item) => acc + ((item.currentStock || 0) * getItemPrice(item)), 0);
 
   const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -202,13 +214,20 @@ export default function Inventory() {
             // Col B (index 1): Unit info (e.g. 2 ml/ขวด)
             // Col C (index 2): Price
             const name = String(row[0] || '').trim();
-            const unitInfo = String(row[1] || '').trim();
-            const price = Number(row[2]) || 0;
+            let unitInfo = String(row[1] || '').trim();
+            let price = Number(row[2]) || 0;
+
+            // If Col B is numeric (e.g. 112) and Col C is 0/empty, Col B is actually the price
+            if (unitInfo && !isNaN(Number(unitInfo)) && price === 0) {
+              price = Number(unitInfo);
+              unitInfo = '';
+            }
 
             if (!name) continue; // Skip empty rows
 
             totalItems++;
-            const fullItemName = unitInfo ? `${name} (${unitInfo})` : name;
+            const fullItemName = (unitInfo && isNaN(Number(unitInfo))) ? `${name} (${unitInfo})` : name;
+            const itemUnit = (unitInfo && isNaN(Number(unitInfo))) ? unitInfo : 'unit';
 
             // Check for duplicate in local state (which is synced with DB)
             const isDuplicate = items.some(
@@ -228,6 +247,8 @@ export default function Inventory() {
                 category: category,
                 type: category,
                 unitPrice: price,
+                price: price,
+                unit: itemUnit,
                 currentStock: 0,
                 initialStock: 0,
                 quantity: 0,
@@ -413,8 +434,8 @@ export default function Inventory() {
                     </div>
 
                     <div className="col-span-2 text-center">
-                      <p className="text-base font-bold text-slate-800 tabular-nums">฿{(item.unitPrice || 0).toLocaleString()}</p>
-                      <p className="text-[10px] text-slate-400 font-medium uppercase">per {item.unit || 'unit'}</p>
+                      <p className="text-base font-bold text-slate-800 tabular-nums">฿{getItemPrice(item).toLocaleString()}</p>
+                      <p className="text-[10px] text-slate-400 font-medium uppercase">per {getItemUnit(item)}</p>
                     </div>
 
                     <div className="col-span-4 px-6">
