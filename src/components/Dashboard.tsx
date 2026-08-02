@@ -839,7 +839,7 @@ export default function Dashboard() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-6">
         {statCards.map((stat, i) => (
           <StatCard
             key={`${stat.label}-${i}`}
@@ -1159,39 +1159,8 @@ export default function Dashboard() {
           </div>
         </Card>
 
-        {/* Quick Actions & Notifications */}
+        {/* Inventory Alerts & Notifications */}
         <div className="space-y-8">
-          <div className="bg-indigo-600 rounded-3xl p-6 text-white shadow-xl shadow-indigo-100">
-            <h3 className="font-bold mb-4 flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5" />
-              Quick Actions
-            </h3>
-            <div className="grid grid-cols-2 gap-3">
-              <button 
-                onClick={() => setIsAddAppointmentModalOpen(true)}
-                className="bg-white/10 hover:bg-white/20 p-3 rounded-xl text-xs font-bold transition-all flex flex-col items-center gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                New Appt
-              </button>
-              <button 
-                onClick={() => setIsAddPatientModalOpen(true)}
-                className="bg-white/10 hover:bg-white/20 p-3 rounded-xl text-xs font-bold transition-all flex flex-col items-center gap-2"
-              >
-                <Users className="w-4 h-4" />
-                Add Patient
-              </button>
-              <button className="bg-white/10 hover:bg-white/20 p-3 rounded-xl text-xs font-bold transition-all flex flex-col items-center gap-2">
-                <CreditCard className="w-4 h-4" />
-                New Bill
-              </button>
-              <button className="bg-white/10 hover:bg-white/20 p-3 rounded-xl text-xs font-bold transition-all flex flex-col items-center gap-2">
-                <Package className="w-4 h-4" />
-                Stock In
-              </button>
-            </div>
-          </div>
-
           <Card title="Inventory Alerts">
             <div className="space-y-4">
               {outOfStockItems.length > 0 ? (

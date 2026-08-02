@@ -17,6 +17,7 @@ import {
   FileSpreadsheet,
   Lock,
   AlertTriangle,
+  AlertCircle,
   RefreshCw,
   CheckCircle2,
   TrendingUp,
@@ -82,6 +83,23 @@ export default function ProductSetting() {
   const [editingProduct, setEditingProduct] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  // Sync mode with Header back button
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('product-setting-mode-change', { detail: mode }));
+
+    const handleHeaderBack = () => {
+      if (mode === 'edit') {
+        setMode('list');
+      }
+    };
+
+    window.addEventListener('app-header-back', handleHeaderBack);
+    return () => {
+      window.removeEventListener('app-header-back', handleHeaderBack);
+      window.dispatchEvent(new CustomEvent('product-setting-mode-change', { detail: 'list' }));
+    };
+  }, [mode]);
+
   // Sync with Firestore
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'inventory'), (snapshot) => {
@@ -114,6 +132,108 @@ export default function ProductSetting() {
   const [passcode, setPasscode] = useState('');
   const [deleteError, setDeleteError] = useState(false);
 
+  // Delete All State
+  const [isDeleteAllOpen, setIsDeleteAllOpen] = useState(false);
+  const [deleteAllPasscode, setDeleteAllPasscode] = useState('');
+  const [deleteAllError, setDeleteAllError] = useState(false);
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
+
+  // Excel Price Conflict State
+  const [pendingImportItems, setPendingImportItems] = useState<Map<string, any> | null>(null);
+  const [priceConflicts, setPriceConflicts] = useState<{
+    key: string;
+    name: string;
+    oldPrice: number;
+    newPrice: number;
+    oldCostPrice: number;
+    newCostPrice: number;
+  }[]>([]);
+  const [showPriceConflictModal, setShowPriceConflictModal] = useState(false);
+
+  // Search & Filter State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterType, setFilterType] = useState('');
+
+  // Helper to extract base unit (text after slash '/' if present, e.g. "10amp/กล่อง" -> "กล่อง")
+  const extractUnitName = (u?: string) => {
+    if (!u) return '';
+    const trimmed = u.trim();
+    if (trimmed.includes('/')) {
+      const parts = trimmed.split('/');
+      const after = parts[parts.length - 1].trim();
+      if (after) return after;
+    }
+    return trimmed;
+  };
+
+  // Helper to extract package unit (text before '/' if present, with digits removed. e.g. "10แผง/กล่อง" -> "แผง", "1แผง" -> "แผง")
+  const extractPackageUnit = (u?: string) => {
+    if (!u) return '';
+    const trimmed = u.trim();
+    if (trimmed.includes('/')) {
+      const parts = trimmed.split('/');
+      const before = parts[0].trim();
+      return before.replace(/^[0-9\s.,]+/, '').trim();
+    }
+    // If no slash but has digits at start, extract unit portion (e.g. "10แผง" -> "แผง")
+    if (/^[0-9\s.,]+/.test(trimmed)) {
+      return trimmed.replace(/^[0-9\s.,]+/, '').trim();
+    }
+    return '';
+  };
+
+  // Helper to determine active stock unit for display
+  const getStockDisplayUnit = (product?: { unit?: string; packageUnit?: string; stockUnit?: string }) => {
+    if (!product) return 'หน่วย';
+    if (product.stockUnit) return product.stockUnit;
+    return product.packageUnit || product.unit || 'หน่วย';
+  };
+
+  // Dynamic Product Types & Units
+  const availableProductTypes = Array.from(new Set([
+    ...PRODUCT_TYPES,
+    ...products.map(p => p.productType || p.type).filter(Boolean),
+    editingProduct?.productType,
+    editingProduct?.type
+  ])).filter(Boolean) as string[];
+
+  const availableUnits = Array.from(new Set([
+    ...UNITS,
+    ...products.map(p => extractUnitName(p.unit)).filter(Boolean),
+    ...products.map(p => p.unit).filter(Boolean),
+    extractUnitName(editingProduct?.unit),
+    editingProduct?.unit
+  ])).filter(Boolean) as string[];
+
+  const availablePackageUnits = Array.from(new Set([
+    ...UNITS,
+    ...products.map(p => p.packageUnit).filter(Boolean),
+    ...products.map(p => extractPackageUnit(p.unit)).filter(Boolean),
+    editingProduct?.packageUnit
+  ])).filter(Boolean) as string[];
+
+  const availableActivityGroups = Array.from(new Set([
+    ...ACTIVITY_GROUPS,
+    ...products.map(p => p.activityGroup).filter(Boolean),
+    editingProduct?.activityGroup
+  ])).filter(Boolean) as string[];
+
+  const availableMedicalUses = Array.from(new Set([
+    ...MEDICAL_USES,
+    ...products.map(p => p.drugLabel?.medicalUse).filter(Boolean),
+    editingProduct?.drugLabel?.medicalUse
+  ])).filter(Boolean) as string[];
+
+  const filteredProducts = products.filter(product => {
+    const q = searchQuery.trim().toLowerCase();
+    const matchesQuery = !q ||
+      (product.name || '').toLowerCase().includes(q) ||
+      (product.genericName || '').toLowerCase().includes(q) ||
+      (product.barcode || '').toLowerCase().includes(q);
+    const matchesType = !filterType || (product.productType || product.type) === filterType;
+    return matchesQuery && matchesType;
+  });
+
   // Success Toast State
   const [toast, setToast] = useState<{ show: boolean; message: string }>({ show: false, message: '' });
 
@@ -137,6 +257,10 @@ export default function ProductSetting() {
       genericName: '',
       productType: '',
       unit: '',
+      packageUnit: '',
+      initialStockUnit: '',
+      stockUnit: '',
+      minStockUnit: '',
       barcode: '',
       initialStock: 0,
       currentStock: 0,
@@ -190,11 +314,16 @@ export default function ProductSetting() {
     setNewPurchaseNote('');
     setEditingProduct({
       id: product.id,
-      name: product.name,
-      type: 'product',
+      name: product.name || '',
       genericName: product.genericName || '',
-      productType: product.type,
-      unit: product.unit,
+      type: product.productType || product.type || '',
+      productType: product.productType || product.type || '',
+      unit: product.unit || '',
+      packageUnit: product.packageUnit || '',
+      initialStockUnit: product.initialStockUnit || product.stockUnit || product.packageUnit || product.unit || '',
+      stockUnit: product.stockUnit || product.packageUnit || product.unit || '',
+      minStockUnit: product.minStockUnit || product.stockUnit || product.packageUnit || product.unit || '',
+      costPrice: product.costPrice ?? 0,
       initialStock: product.initialStock || 0,
       currentStock: product.currentStock || 0,
       minStock: product.minStock || 0,
@@ -207,7 +336,7 @@ export default function ProductSetting() {
       activitySubGroup: product.activitySubGroup || '',
       petTypes: product.petTypes || [],
       printGroup: product.printGroup || '',
-      price: product.price || 0,
+      price: product.price ?? 0,
       purchaseHistory: product.purchaseHistory || [],
       status: product.status || {
         appoint: { active: true, favorite: false },
@@ -337,11 +466,20 @@ export default function ProductSetting() {
     }
 
     try {
+      const finalType = editingProduct.productType || editingProduct.type || 'Other';
+      const finalUnit = editingProduct.unit || 'หน่วย';
       const productData = {
         ...editingProduct,
         name: editingProduct.name,
-        type: editingProduct.productType || 'Other',
-        unit: editingProduct.unit || 'Unit',
+        type: finalType,
+        productType: finalType,
+        unit: finalUnit,
+        packageUnit: editingProduct.packageUnit || '',
+        initialStockUnit: editingProduct.initialStockUnit || editingProduct.packageUnit || editingProduct.unit || '',
+        stockUnit: editingProduct.stockUnit || editingProduct.packageUnit || editingProduct.unit || '',
+        minStockUnit: editingProduct.minStockUnit || editingProduct.stockUnit || editingProduct.packageUnit || editingProduct.unit || '',
+        costPrice: typeof editingProduct.costPrice === 'number' ? editingProduct.costPrice : (parseFloat(editingProduct.costPrice) || 0),
+        price: typeof editingProduct.price === 'number' ? editingProduct.price : (parseFloat(editingProduct.price) || 0),
         updatedAt: serverTimestamp()
       };
 
@@ -402,6 +540,125 @@ export default function ProductSetting() {
     }
   };
 
+  const handleDeleteAll = async () => {
+    if (deleteAllPasscode !== '198') {
+      setDeleteAllError(true);
+      return;
+    }
+
+    setIsDeletingAll(true);
+    try {
+      const deletePromises = products.map(product => deleteDoc(doc(db, 'inventory', product.id)));
+      await Promise.all(deletePromises);
+      
+      setIsDeleteAllOpen(false);
+      setDeleteAllPasscode('');
+      setDeleteAllError(false);
+      setToast({ show: true, message: 'ลบสินค้าทั้งหมดเรียบร้อยแล้ว!' });
+      setTimeout(() => setToast(prev => ({ ...prev, show: false })), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'inventory');
+    } finally {
+      setIsDeletingAll(false);
+    }
+  };
+
+  const executeImport = async (
+    importedProductsMap: Map<string, any>,
+    overwritePrices: boolean
+  ) => {
+    setIsImporting(true);
+    try {
+      let totalItems = 0;
+      let successCount = 0;
+      const duplicateNames: string[] = [];
+
+      for (const [key, item] of importedProductsMap.entries()) {
+        totalItems++;
+
+        const existingDbProduct = products.find(p => p.name.toLowerCase() === key);
+
+        if (existingDbProduct) {
+          duplicateNames.push(item.name);
+
+          // Determine cost price & sale price to save
+          const finalCostPrice = item.costPrice > 0 ? item.costPrice : (existingDbProduct.costPrice || 0);
+          const finalPrice = overwritePrices 
+            ? (item.price > 0 ? item.price : (existingDbProduct.price || 0))
+            : (existingDbProduct.price > 0 ? existingDbProduct.price : (item.price || 0));
+
+          await updateDoc(doc(db, 'inventory', existingDbProduct.id), {
+            currentStock: (existingDbProduct.currentStock || 0) + item.currentStock,
+            costPrice: finalCostPrice,
+            price: finalPrice,
+            type: item.type || existingDbProduct.type || 'Other',
+            productType: item.type || existingDbProduct.productType || 'Other',
+            unit: item.unit || existingDbProduct.unit || 'หน่วย',
+            packageUnit: item.packageUnit || existingDbProduct.packageUnit || '',
+            activityGroup: item.activityGroup || existingDbProduct.activityGroup || '',
+            drugLabel: {
+              ...(existingDbProduct.drugLabel || { enabled: true }),
+              medicalUse: item.medicalUse || existingDbProduct.drugLabel?.medicalUse || ''
+            },
+            updatedAt: serverTimestamp()
+          });
+          successCount++;
+          continue;
+        }
+
+        await addDoc(collection(db, 'inventory'), {
+          name: item.name,
+          type: item.type,
+          productType: item.type,
+          unit: item.unit,
+          packageUnit: item.packageUnit || '',
+          costPrice: item.costPrice || 0,
+          price: item.price || 0,
+          currentStock: item.currentStock,
+          initialStock: item.currentStock,
+          minStock: 5,
+          isInStock: item.currentStock > 0,
+          activityGroup: item.activityGroup,
+          drugLabel: {
+            enabled: true,
+            medicalUse: item.medicalUse,
+            position: '',
+            dosage: 0,
+            dosageUnit: '',
+            timing: 'after',
+            timingDetail: '',
+            slots: { morning: false, noon: false, evening: false, bedtime: false },
+            other: false,
+            every: 0,
+            asNeeded: false,
+            warnings: { noEat: false, fridge: false, danger: false, shake: false },
+            purpose: '',
+            additional: ''
+          },
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        successCount++;
+      }
+
+      setImportSummary({
+        total: totalItems,
+        success: successCount,
+        duplicates: duplicateNames,
+        show: true
+      });
+
+    } catch (err) {
+      console.error("Import error:", err);
+    } finally {
+      setIsImporting(false);
+      setShowPriceConflictModal(false);
+      setPendingImportItems(null);
+      setPriceConflicts([]);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -413,58 +670,141 @@ export default function ProductSetting() {
       try {
         const bstr = evt.target?.result;
         const wb = XLSX.read(bstr, { type: 'binary' });
-        
-        let totalItems = 0;
-        let successCount = 0;
-        const duplicateNames: string[] = [];
-        const newProducts: Product[] = [];
+
+        const importedProductsMap = new Map<string, {
+          name: string;
+          type: string;
+          unit: string;
+          packageUnit: string;
+          costPrice: number;
+          price: number;
+          currentStock: number;
+          expiryDates: string[];
+          activityGroup: string;
+          medicalUse: string;
+        }>();
 
         for (const sheetName of wb.SheetNames) {
           const ws = wb.Sheets[sheetName];
           const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
-          const rows = data.slice(1);
-          
-          for (const row of rows) {
-            const name = String(row[0] || '').trim();
-            const type = String(row[1] || 'Other').trim();
-            const unitRaw = row[2] !== undefined ? String(row[2]).trim() : '';
-            // For price/unit column, we want to try and extract the number if possible
-            const unit = unitRaw.includes(',') ? unitRaw.replace(/,/g, '') : unitRaw;
+          if (!data || data.length <= 1) continue;
 
-            if (!name) continue;
-            totalItems++;
+          const sheetTabName = sheetName.trim();
+          let currentCategory = sheetTabName;
+          let lastProductName = '';
+          let lastUnit = '';
+          let lastPackageUnit = '';
+          let lastCost = 0;
+          let lastPrice = 0;
 
-            const isDuplicate = products.some(p => p.name.toLowerCase() === name.toLowerCase());
+          for (let i = 1; i < data.length; i++) {
+            const row = data[i];
+            if (!row || row.length === 0) continue;
 
-            if (isDuplicate) {
-              duplicateNames.push(name);
+            const rawColA = String(row[0] || '').trim();
+            const rawColB = String(row[1] || '').trim(); // ปริมาณ/หน่วย e.g. "3เม็ด/กล่อง"
+            const rawColC = row[2] !== undefined ? String(row[2]).trim() : ''; // ราคาทุน
+            const rawColD = row[3] !== undefined ? String(row[3]).trim() : ''; // ราคาขาย
+            const rawColE = row[4] !== undefined ? String(row[4]).trim() : ''; // จำนวนคงเหลือ
+            const rawColF = row[5] !== undefined ? String(row[5]).trim() : ''; // วันหมดอายุ
+
+            if (rawColA && !rawColB && !rawColC && !rawColD && !rawColE) {
+              currentCategory = rawColA;
+              lastProductName = '';
               continue;
             }
 
-            await addDoc(collection(db, 'inventory'), {
-              name,
-              type,
-              unit,
-              isInStock: true,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp()
-            });
-            successCount++;
+            const cleanNumber = (valStr: string) => {
+              if (!valStr) return 0;
+              const match = valStr.match(/[0-9]+(\.[0-9]+)?/);
+              return match ? parseFloat(match[0]) : 0;
+            };
+
+            const qty = cleanNumber(rawColE);
+            const cost = cleanNumber(rawColC);
+            const price = cleanNumber(rawColD);
+
+            let productName = rawColA;
+            const parsedUnit = extractUnitName(rawColB);
+            const parsedPackageUnit = extractPackageUnit(rawColB);
+            let unit = parsedUnit || lastUnit;
+            let packageUnit = parsedPackageUnit || lastPackageUnit;
+
+            if (!productName) {
+              if (lastProductName && (qty > 0 || rawColF)) {
+                productName = lastProductName;
+              } else {
+                continue;
+              }
+            } else {
+              lastProductName = productName;
+              if (unit) lastUnit = unit;
+              if (packageUnit) lastPackageUnit = packageUnit;
+              if (cost > 0) lastCost = cost;
+              if (price > 0) lastPrice = price;
+            }
+
+            const key = productName.toLowerCase();
+            const existing = importedProductsMap.get(key);
+
+            const finalCost = cost > 0 ? cost : (existing?.costPrice || lastCost);
+            const finalPrice = price > 0 ? price : (existing?.price || lastPrice);
+
+            if (existing) {
+              existing.currentStock += qty;
+              if (rawColF) existing.expiryDates.push(rawColF);
+            } else {
+              importedProductsMap.set(key, {
+                name: productName,
+                type: currentCategory,
+                unit: unit || 'หน่วย',
+                packageUnit: packageUnit || '',
+                costPrice: finalCost,
+                price: finalPrice,
+                currentStock: qty,
+                expiryDates: rawColF ? [rawColF] : [],
+                activityGroup: sheetTabName,
+                medicalUse: sheetTabName
+              });
+            }
           }
         }
 
-        setImportSummary({
-          total: totalItems,
-          success: successCount,
-          duplicates: duplicateNames,
-          show: true
-        });
+        // Check for conflicts with existing DB products having old prices
+        const conflicts: {
+          key: string;
+          name: string;
+          oldPrice: number;
+          newPrice: number;
+          oldCostPrice: number;
+          newCostPrice: number;
+        }[] = [];
 
+        for (const [key, item] of importedProductsMap.entries()) {
+          const existingDbProduct = products.find(p => p.name.toLowerCase() === key);
+          if (existingDbProduct && existingDbProduct.price > 0 && item.price > 0 && existingDbProduct.price !== item.price) {
+            conflicts.push({
+              key,
+              name: item.name,
+              oldPrice: existingDbProduct.price,
+              newPrice: item.price,
+              oldCostPrice: existingDbProduct.costPrice || 0,
+              newCostPrice: item.costPrice || 0
+            });
+          }
+        }
+
+        if (conflicts.length > 0) {
+          setPendingImportItems(importedProductsMap);
+          setPriceConflicts(conflicts);
+          setShowPriceConflictModal(true);
+          setIsImporting(false);
+        } else {
+          await executeImport(importedProductsMap, true);
+        }
       } catch (err) {
         console.error("Import error:", err);
-      } finally {
         setIsImporting(false);
-        if (fileInputRef.current) fileInputRef.current.value = '';
       }
     };
     reader.readAsBinaryString(file);
@@ -476,12 +816,6 @@ export default function ProductSetting() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <button 
-              onClick={() => setMode('list')}
-              className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
             <h1 className="text-2xl font-bold text-slate-900 uppercase tracking-tight">PRODUCT SETTING</h1>
           </div>
           <div className="flex items-center gap-3">
@@ -580,35 +914,59 @@ export default function ProductSetting() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">Type</label>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Type (ชนิดยา/หมวดหมู่)</label>
                   <div className="relative">
-                    <select 
-                      value={editingProduct.productType}
-                      onChange={(e) => setEditingProduct({ ...editingProduct, productType: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 focus:ring-2 focus:ring-[#00b4d8] outline-none appearance-none font-medium"
-                    >
-                      <option value="">Select Product Type</option>
-                      {PRODUCT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input 
+                      type="text"
+                      list="productTypeDatalist"
+                      placeholder="เลือก หรือ พิมพ์ชนิดยา (เช่น ยาซึม/ยาสลบ)"
+                      value={editingProduct?.productType || editingProduct?.type || ''}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, productType: e.target.value, type: e.target.value })}
+                      className="w-full pl-4 pr-10 py-3 rounded-xl border border-slate-100 bg-slate-50/50 focus:ring-2 focus:ring-[#00b4d8] outline-none font-medium text-slate-800 [&::-webkit-calendar-picker-indicator]:opacity-0"
+                    />
+                    <datalist id="productTypeDatalist">
+                      {availableProductTypes.map(t => <option key={t} value={t} />)}
+                    </datalist>
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">Unit ตั้งต้น</label>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">ปริมาณบรรจุ</label>
                   <div className="relative">
-                    <select 
-                      value={editingProduct.unit}
-                      onChange={(e) => setEditingProduct({ ...editingProduct, unit: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 focus:ring-2 focus:ring-[#00b4d8] outline-none appearance-none font-medium"
-                    >
-                      <option value="">Select Unit</option>
-                      {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                    </select>
-                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input 
+                      type="text"
+                      list="packageUnitDatalist"
+                      placeholder="เลือก หรือ พิมพ์หน่วยย่อย (เช่น แผง, amp, เม็ด)"
+                      value={editingProduct?.packageUnit || ''}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, packageUnit: e.target.value })}
+                      className="w-full pl-4 pr-10 py-3 rounded-xl border border-slate-100 bg-slate-50/50 focus:ring-2 focus:ring-[#00b4d8] outline-none font-medium text-slate-800 [&::-webkit-calendar-picker-indicator]:opacity-0"
+                    />
+                    <datalist id="packageUnitDatalist">
+                      {availablePackageUnits.map(u => <option key={u} value={u} />)}
+                    </datalist>
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                   </div>
-                  <p className="mt-1 text-[10px] text-slate-400 italic">ให้ใส่หน่วยย่อยที่สุดของ product ชนิดนี้</p>
+                  <p className="mt-1 text-[10px] text-slate-400 italic">ตัดตัวเลขออก เหลือเฉพาะชื่อหน่วย เช่น แผง, amp, เม็ด</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">หน่วยตั้งต้น</label>
+                  <div className="relative">
+                    <input 
+                      type="text"
+                      list="unitDatalist"
+                      placeholder="เลือก หรือ พิมพ์หน่วยหลัก (เช่น กล่อง, ขวด)"
+                      value={editingProduct?.unit || ''}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, unit: e.target.value })}
+                      className="w-full pl-4 pr-10 py-3 rounded-xl border border-slate-100 bg-slate-50/50 focus:ring-2 focus:ring-[#00b4d8] outline-none font-medium text-slate-800 [&::-webkit-calendar-picker-indicator]:opacity-0"
+                    />
+                    <datalist id="unitDatalist">
+                      {availableUnits.map(u => <option key={u} value={u} />)}
+                    </datalist>
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  </div>
+                  <p className="mt-1 text-[10px] text-slate-400 italic">หน่วยหลัก เช่น กล่อง, ขวด, แผง, ซอง</p>
                 </div>
               </div>
 
@@ -623,33 +981,88 @@ export default function ProductSetting() {
                     placeholder="Scan or enter barcode"
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">จำนวนเริ่มต้น (Initial)</label>
-                  <input 
-                    type="number"
-                    value={editingProduct.initialStock}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, initialStock: parseInt(e.target.value) || 0 })}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-medium text-indigo-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">จำนวนคงเหลือ (Stock QTY)</label>
-                  <input 
-                    type="number"
-                    value={editingProduct.currentStock}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, currentStock: parseInt(e.target.value) || 0 })}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-medium text-[#00b4d8]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">จุดแจ้งเตือน (Min Alert)</label>
-                  <input 
-                    type="number"
-                    value={editingProduct.minStock}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, minStock: parseInt(e.target.value) || 0 })}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-medium text-rose-500"
-                  />
-                </div>
+                {(() => {
+                  const defaultBaseUnit = editingProduct?.packageUnit || editingProduct?.unit || 'หน่วย';
+                  const initialStockUnit = editingProduct?.initialStockUnit || defaultBaseUnit;
+                  const currentStockUnit = editingProduct?.stockUnit || defaultBaseUnit;
+                  const minStockUnit = editingProduct?.minStockUnit || currentStockUnit;
+
+                  const stockUnitOptions = Array.from(new Set([
+                    editingProduct?.unit,
+                    editingProduct?.packageUnit,
+                    initialStockUnit,
+                    currentStockUnit,
+                    minStockUnit,
+                    'amp', 'vial', 'กล่อง', 'ขวด', 'แผง', 'ซอง', 'เม็ด', 'หลอด', 'ml', 'มล.', 'ถุง', 'ชิ้น', 'เข็ม', 'cc'
+                  ].filter(Boolean))) as string[];
+
+                  const renderUnitSelect = (selectedValue: string, fieldName: 'initialStockUnit' | 'stockUnit' | 'minStockUnit') => (
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center">
+                      <select
+                        value={selectedValue}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, [fieldName]: e.target.value })}
+                        className="bg-slate-100/90 hover:bg-slate-200 text-slate-700 font-bold text-xs py-1.5 px-2.5 rounded-lg border border-slate-200 outline-none cursor-pointer transition-all shadow-sm focus:ring-2 focus:ring-cyan-500/30"
+                        title="คลิกเพื่อเลือกหน่วย"
+                      >
+                        {stockUnitOptions.map((u) => (
+                          <option key={u} value={u}>
+                            {u}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+
+                  return (
+                    <>
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">
+                          จำนวนเริ่มต้น (Initial) <span className="text-indigo-500 font-semibold">({initialStockUnit})</span>
+                        </label>
+                        <div className="relative">
+                          <input 
+                            type="number"
+                            value={editingProduct.initialStock}
+                            onChange={(e) => setEditingProduct({ ...editingProduct, initialStock: parseInt(e.target.value) || 0 })}
+                            className="w-full pl-4 pr-24 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-medium text-indigo-500"
+                          />
+                          {renderUnitSelect(initialStockUnit, 'initialStockUnit')}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">
+                          จำนวนคงเหลือ (Stock QTY) <span className="text-[#00b4d8] font-bold">({currentStockUnit})</span>
+                        </label>
+                        <div className="relative">
+                          <input 
+                            type="number"
+                            value={editingProduct.currentStock}
+                            onChange={(e) => setEditingProduct({ ...editingProduct, currentStock: parseInt(e.target.value) || 0 })}
+                            className="w-full pl-4 pr-24 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-medium text-[#00b4d8]"
+                          />
+                          {renderUnitSelect(currentStockUnit, 'stockUnit')}
+                        </div>
+                        <p className="mt-1 text-[10px] text-slate-400 italic">
+                          *ระบุจำนวนตามหน่วยนับจริง ({currentStockUnit})
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">
+                          จุดแจ้งเตือน (Min Alert) <span className="text-rose-500 font-semibold">({minStockUnit})</span>
+                        </label>
+                        <div className="relative">
+                          <input 
+                            type="number"
+                            value={editingProduct.minStock}
+                            onChange={(e) => setEditingProduct({ ...editingProduct, minStock: parseInt(e.target.value) || 0 })}
+                            className="w-full pl-4 pr-24 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-medium text-rose-500"
+                          />
+                          {renderUnitSelect(minStockUnit, 'minStockUnit')}
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
 
               <div className="flex items-center gap-8">
@@ -728,15 +1141,18 @@ export default function ProductSetting() {
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">Activity Group <span className="text-red-500">*</span></label>
                     <div className="relative">
-                      <select 
-                        value={editingProduct.activityGroup}
+                      <input 
+                        type="text"
+                        list="activityGroupDatalist"
+                        placeholder="เลือก หรือ พิมพ์ Activity Group (เช่น ยาฉีด, ยาและเวชภัณฑ์)"
+                        value={editingProduct?.activityGroup || ''}
                         onChange={(e) => setEditingProduct({ ...editingProduct, activityGroup: e.target.value })}
-                        className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 focus:ring-2 focus:ring-[#00b4d8] outline-none appearance-none font-medium"
-                      >
-                        <option value="">Activity Group</option>
-                        {ACTIVITY_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
-                      </select>
-                      <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        className="w-full pl-4 pr-10 py-3 rounded-xl border border-slate-100 bg-slate-50/50 focus:ring-2 focus:ring-[#00b4d8] outline-none font-medium text-slate-800 [&::-webkit-calendar-picker-indicator]:opacity-0"
+                      />
+                      <datalist id="activityGroupDatalist">
+                        {availableActivityGroups.map(g => <option key={g} value={g} />)}
+                      </datalist>
+                      <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                     </div>
                   </div>
                   <div>
@@ -792,14 +1208,26 @@ export default function ProductSetting() {
                   </button>
                 </div>
 
-                <div className="flex items-center gap-4">
-                  <div className="w-1/2">
-                    <label className="block text-sm font-bold text-slate-700 mb-2">ราคา</label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">ราคา (ราคาขาย)</label>
                     <div className="relative">
                       <input 
                         type="number"
-                        value={editingProduct.price}
-                        onChange={(e) => setEditingProduct({ ...editingProduct, price: parseFloat(e.target.value) })}
+                        value={editingProduct.price ?? ''}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, price: parseFloat(e.target.value) || 0 })}
+                        className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-bold text-center"
+                      />
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 font-bold text-slate-400">บาท</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">ราคาทุน</label>
+                    <div className="relative">
+                      <input 
+                        type="number"
+                        value={editingProduct.costPrice ?? ''}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, costPrice: parseFloat(e.target.value) || 0 })}
                         className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-bold text-center"
                       />
                       <span className="absolute right-4 top-1/2 -translate-y-1/2 font-bold text-slate-400">บาท</span>
@@ -967,18 +1395,21 @@ export default function ProductSetting() {
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">วิธีการใช้</label>
                     <div className="relative">
-                      <select 
-                        value={editingProduct.drugLabel.medicalUse}
+                      <input 
+                        type="text"
+                        list="medicalUseDatalist"
+                        placeholder="เลือก หรือ พิมพ์วิธีการใช้ (เช่น ยาฉีด, กิน, ทา)"
+                        value={editingProduct?.drugLabel?.medicalUse || ''}
                         onChange={(e) => setEditingProduct({
                           ...editingProduct,
-                          drugLabel: { ...editingProduct.drugLabel, medicalUse: e.target.value }
+                          drugLabel: { ...(editingProduct?.drugLabel || { enabled: true }), medicalUse: e.target.value }
                         })}
-                        className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 focus:ring-2 focus:ring-[#00b4d8] outline-none appearance-none font-medium"
-                      >
-                        <option value="">Select Medical Use</option>
-                        {MEDICAL_USES.map(m => <option key={m} value={m}>{m}</option>)}
-                      </select>
-                      <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        className="w-full pl-4 pr-10 py-3 rounded-xl border border-slate-100 bg-slate-50/50 focus:ring-2 focus:ring-[#00b4d8] outline-none font-medium text-slate-800 [&::-webkit-calendar-picker-indicator]:opacity-0"
+                      />
+                      <datalist id="medicalUseDatalist">
+                        {availableMedicalUses.map(m => <option key={m} value={m} />)}
+                      </datalist>
+                      <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                     </div>
                   </div>
                 </div>
@@ -1602,8 +2033,10 @@ export default function ProductSetting() {
             <div className="flex items-center">
               <input 
                 type="text"
-                placeholder="Product Name, Barcode"
-                className="flex-1 px-4 py-2 rounded-l-lg border border-slate-200 focus:ring-2 focus:ring-[#00b4d8] focus:border-transparent outline-none text-sm"
+                placeholder="Product Name, Barcode, Generic Name"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="flex-1 px-4 py-2 rounded-l-lg border border-slate-200 focus:ring-2 focus:ring-[#00b4d8] focus:border-transparent outline-none text-sm font-medium"
               />
               <button className="px-4 py-2 bg-slate-50 border border-l-0 border-slate-200 rounded-r-lg hover:bg-slate-100 transition-colors">
                 <Search className="w-4 h-4 text-slate-400" />
@@ -1613,10 +2046,15 @@ export default function ProductSetting() {
           <div className="w-72 space-y-2">
             <p className="text-xs font-black text-slate-800 uppercase tracking-wider">Product Type</p>
             <div className="relative">
-              <select className="w-full px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-400 text-sm outline-none appearance-none pr-10">
-                <option>Select Product Type</option>
+              <select 
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+                className="w-full px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm outline-none appearance-none pr-10 font-medium cursor-pointer"
+              >
+                <option value="">ทั้งหมด (All Types)</option>
+                {availableProductTypes.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
             </div>
           </div>
         </div>
@@ -1634,40 +2072,77 @@ export default function ProductSetting() {
                 <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-right pr-12">ราคา(บาท)</th>
                 <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-right pr-10 text-[#00b4d8]">QTY</th>
                 <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-center">Is in Stock</th>
-                <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-center">Edit</th>
+                <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-center">
+                  <div className="flex items-center justify-center gap-3">
+                    <span>EDIT</span>
+                    <button 
+                      onClick={() => {
+                        setIsDeleteAllOpen(true);
+                        setDeleteAllPasscode('');
+                        setDeleteAllError(false);
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-all shadow-2xs tracking-normal cursor-pointer"
+                      title="ลบสินค้าทั้งหมด"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                      <span>ลบทั้งหมด</span>
+                    </button>
+                  </div>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center">
+                  <td colSpan={7} className="px-6 py-12 text-center">
                     <RefreshCw className="w-6 h-6 text-[#00b4d8] animate-spin mx-auto mb-2" />
                     <p className="text-slate-400 font-bold">Loading Products...</p>
                   </td>
                 </tr>
-              ) : products.length > 0 ? products.map((product, index) => (
+              ) : filteredProducts.length > 0 ? filteredProducts.map((product, index) => (
                 <tr key={product.id} className="hover:bg-slate-50/50 transition-colors group">
                   <td className="px-6 py-4 text-center font-medium text-slate-500">{index + 1}</td>
                   <td className="px-6 py-4">
                     <div className="font-bold text-slate-700">{product.name}</div>
+                    {product.genericName && (
+                      <div className="text-xs text-slate-400 font-normal">{product.genericName}</div>
+                    )}
                   </td>
-                  <td className="px-6 py-4 text-center text-slate-700 font-medium">{product.type}</td>
+                  <td className="px-6 py-4 text-center text-slate-700 font-medium">
+                    <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-semibold">
+                      {product.productType || product.type || '-'}
+                    </span>
+                  </td>
                   <td className="px-6 py-4 text-right pr-12">
                     <div className="font-black text-slate-800 text-base tabular-nums">
-                      {Number(product.unit || 0).toLocaleString()}
+                      {Number(product.price || product.costPrice || 0).toLocaleString()}
                     </div>
                   </td>
                   <td className="px-6 py-4 text-right pr-10">
                     <div className="flex flex-col items-end">
-                      <span className={cn(
-                        "text-sm font-black tabular-nums",
-                        (product.currentStock || 0) <= (product.minStock || 0) ? "text-rose-500" : "text-[#00b4d8]"
-                      )}>
-                        {(product.currentStock || 0).toLocaleString()}
-                      </span>
-                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter tabular-nums">
-                        Min: {(product.minStock || 0).toLocaleString()}
-                      </span>
+                      {(() => {
+                        const activeUnit = product.stockUnit || getStockDisplayUnit(product);
+                        const minUnit = product.minStockUnit || activeUnit;
+                        return (
+                          <>
+                            <span className={cn(
+                              "text-sm font-black tabular-nums flex items-center gap-1",
+                              (product.currentStock || 0) <= (product.minStock || 0) ? "text-rose-500" : "text-[#00b4d8]"
+                            )}>
+                              {(product.currentStock || 0).toLocaleString()} 
+                              {activeUnit && <span className="text-xs font-bold text-slate-500">({activeUnit})</span>}
+                            </span>
+                            {product.packageUnit && product.unit && product.packageUnit !== product.unit && (
+                              <span className="text-[10px] text-slate-400 font-medium">
+                                (ขนาดบรรจุ: {product.packageUnit}/{product.unit})
+                              </span>
+                            )}
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter tabular-nums">
+                              Min: {(product.minStock || 0).toLocaleString()} {minUnit}
+                            </span>
+                          </>
+                        );
+                      })()}
                     </div>
                   </td>
                   <td className="px-6 py-4 text-center">
@@ -1720,6 +2195,86 @@ export default function ProductSetting() {
 
       {/* Modals */}
       <AnimatePresence>
+        {isDeleteAllOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm"
+              onClick={() => !isDeletingAll && setIsDeleteAllOpen(false)}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden border border-rose-100"
+            >
+              <div className="p-8 space-y-6 text-center">
+                <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center mx-auto border border-rose-100 shadow-sm">
+                  <AlertTriangle className="w-8 h-8" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-xl font-bold text-slate-900">ยืนยันการลบสินค้าทั้งหมด?</h3>
+                  <p className="text-slate-500 text-sm leading-relaxed">
+                    กรุณากรอกรหัสความปลอดภัยเพื่อยืนยันการลบสินค้าทั้งหมดในระบบ
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="relative">
+                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                    <input 
+                      type="password"
+                      placeholder="Enter passcode"
+                      value={deleteAllPasscode}
+                      onChange={(e) => {
+                        setDeleteAllPasscode(e.target.value);
+                        setDeleteAllError(false);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleDeleteAll();
+                      }}
+                      className={cn(
+                        "w-full pl-10 pr-4 py-3 rounded-xl border outline-none font-bold text-center tracking-[0.5em] transition-all",
+                        deleteAllError ? "border-rose-300 ring-4 ring-rose-50" : "border-slate-200 focus:border-[#00b4d8]"
+                      )}
+                      autoFocus
+                    />
+                  </div>
+                  {deleteAllError && (
+                    <p className="text-rose-500 text-xs font-bold">รหัสความปลอดภัยไม่ถูกต้อง!</p>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button 
+                    onClick={() => setIsDeleteAllOpen(false)}
+                    disabled={isDeletingAll}
+                    className="py-3 px-4 bg-slate-50 text-slate-600 rounded-xl font-bold hover:bg-slate-100 transition-all cursor-pointer"
+                  >
+                    ยกเลิก
+                  </button>
+                  <button 
+                    onClick={handleDeleteAll}
+                    disabled={isDeletingAll}
+                    className="py-3 px-4 bg-rose-500 text-white rounded-xl font-bold hover:bg-rose-600 transition-all shadow-lg shadow-rose-100 flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    {isDeletingAll ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>กำลังลบ...</span>
+                      </>
+                    ) : (
+                      <span>ยืนยันลบทั้งหมด</span>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {deletingId && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
             <motion.div 
@@ -1847,6 +2402,86 @@ export default function ProductSetting() {
                   <CheckCircle2 className="w-5 h-5" />
                   Got it
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {showPriceConflictModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm"
+              onClick={() => {
+                setShowPriceConflictModal(false);
+                setPendingImportItems(null);
+                setPriceConflicts([]);
+                if (fileInputRef.current) fileInputRef.current.value = '';
+              }}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden border border-amber-100"
+            >
+              <div className="p-8 space-y-6">
+                <div className="w-14 h-14 bg-amber-50 text-amber-500 rounded-2xl flex items-center justify-center mx-auto border border-amber-100 shadow-xs">
+                  <AlertCircle className="w-7 h-7" />
+                </div>
+
+                <div className="space-y-2 text-center">
+                  <h3 className="text-xl font-bold text-slate-900">พบสินค้าที่มีราคาขายเดิมในระบบ</h3>
+                  <p className="text-slate-500 text-sm leading-relaxed">
+                    พบสินค้าจำนวน <span className="font-bold text-amber-600">{priceConflicts.length} รายการ</span> ที่มีราคาขายเดิมในระบบ คุณต้องการทับซ้ำราคาเดิมด้วยราคาใหม่จาก Excel หรือไม่?
+                  </p>
+                </div>
+
+                <div className="max-h-52 overflow-y-auto bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-2 divide-y divide-slate-100">
+                  {priceConflicts.map((c) => (
+                    <div key={c.key} className="pt-2 first:pt-0 flex items-center justify-between text-xs">
+                      <div>
+                        <p className="font-bold text-slate-800">{c.name}</p>
+                        <p className="text-slate-400">ราคาทุน: ฿{c.oldCostPrice} ➔ ฿{c.newCostPrice}</p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-slate-400 line-through mr-2">฿{c.oldPrice}</span>
+                        <span className="font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                          ฿{c.newPrice}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="space-y-2 pt-2">
+                  <button 
+                    onClick={() => pendingImportItems && executeImport(pendingImportItems, true)}
+                    className="w-full py-3.5 px-4 bg-[#00b4d8] text-white rounded-xl font-bold hover:bg-[#0096b1] transition-all shadow-md shadow-cyan-100 flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>ทับซ้ำราคาเดิมทั้งหมด (ใช้อัตราใหม่จาก Excel)</span>
+                  </button>
+                  <button 
+                    onClick={() => pendingImportItems && executeImport(pendingImportItems, false)}
+                    className="w-full py-3.5 px-4 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <span>คงราคาขายเดิมไว้ (ไม่ทับซ้ำราคา)</span>
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setShowPriceConflictModal(false);
+                      setPendingImportItems(null);
+                      setPriceConflicts([]);
+                      if (fileInputRef.current) fileInputRef.current.value = '';
+                    }}
+                    className="w-full py-2 px-4 text-slate-400 hover:text-slate-600 font-medium text-xs text-center cursor-pointer"
+                  >
+                    ยกเลิกการนำเข้า
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>

@@ -22,6 +22,8 @@ import { useClinic } from '../../contexts/ClinicContext';
 interface SidebarProps {
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
+  isMobileOpen?: boolean;
+  setIsMobileOpen?: (open: boolean) => void;
   activeView: string;
   setActiveView: (view: any) => void;
   expandedGroups: string[];
@@ -32,6 +34,8 @@ interface SidebarProps {
 export default function Sidebar({ 
   isOpen, 
   setIsOpen, 
+  isMobileOpen = false,
+  setIsMobileOpen,
   activeView, 
   setActiveView, 
   expandedGroups, 
@@ -112,47 +116,59 @@ export default function Sidebar({
     });
   }, [activeView]);
 
-  return (
-    <aside 
-      className={cn(
-        "bg-[#006d87] transition-all duration-300 flex flex-col z-20 shadow-xl",
-        isOpen ? "w-72" : "w-20"
-      )}
-    >
-      <div className="h-24 flex items-center px-4 bg-[#005b70]">
-        <button 
-          onClick={() => setIsOpen(!isOpen)}
-          className="text-white hover:bg-white/10 p-2 rounded-lg transition-colors flex items-center justify-center"
-        >
-          {isOpen ? (
-            <Menu className="w-6 h-6" />
-          ) : (
-            <div className="w-10 h-10 bg-white rounded-xl p-1 flex items-center justify-center overflow-hidden shadow-sm">
-              <img 
-                src={clinicLogo} 
-                className="w-full h-full object-contain" 
-                alt="Logo"
-                referrerPolicy="no-referrer"
-              />
+  const handleNavClick = (viewId: string) => {
+    setActiveView(viewId);
+    if (setIsMobileOpen) {
+      setIsMobileOpen(false);
+    }
+  };
+
+  const renderNavItems = (isDrawer = false) => (
+    <>
+      <div className="h-24 flex items-center px-4 bg-[#005b70] justify-between">
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => !isDrawer && setIsOpen(!isOpen)}
+            className="text-white hover:bg-white/10 p-2 rounded-lg transition-colors flex items-center justify-center shrink-0"
+          >
+            {(isOpen || isDrawer) ? (
+              <Menu className="w-6 h-6" />
+            ) : (
+              <div className="w-10 h-10 bg-white rounded-xl p-1 flex items-center justify-center overflow-hidden shadow-sm">
+                <img 
+                  src={clinicLogo} 
+                  className="w-full h-full object-contain" 
+                  alt="Logo"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+            )}
+          </button>
+          {(isOpen || isDrawer) && (
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 bg-white rounded-xl p-1 flex items-center justify-center overflow-hidden shadow-sm shrink-0">
+                <img 
+                  src={clinicLogo} 
+                  className="w-full h-full object-contain" 
+                  alt="Logo"
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    target.src = "https://via.placeholder.com/100?text=AB";
+                  }}
+                />
+              </div>
+              <span className="font-bold text-lg text-white tracking-tight leading-tight truncate">{clinicName}</span>
             </div>
           )}
-        </button>
-        {isOpen && (
-          <div className="ml-2 flex items-center gap-3">
-            <div className="w-10 h-10 bg-white rounded-xl p-1 flex items-center justify-center overflow-hidden shadow-sm">
-              <img 
-                src={clinicLogo} 
-                className="w-full h-full object-contain" 
-                alt="Logo"
-                referrerPolicy="no-referrer"
-                onError={(e) => {
-                  const target = e.target as HTMLImageElement;
-                  target.src = "https://via.placeholder.com/100?text=AB";
-                }}
-              />
-            </div>
-            <span className="font-bold text-lg text-white tracking-tight leading-tight truncate max-w-[140px]">{clinicName}</span>
-          </div>
+        </div>
+        {isDrawer && (
+          <button 
+            onClick={() => setIsMobileOpen?.(false)}
+            className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-xl text-xs font-bold uppercase"
+          >
+            ✕
+          </button>
         )}
       </div>
 
@@ -164,7 +180,7 @@ export default function Sidebar({
           return (
             <div key={group.id} className="mb-1">
               <button
-                onClick={() => group.subItems ? toggleGroup(group.id) : setActiveView(group.id)}
+                onClick={() => group.subItems ? toggleGroup(group.id) : handleNavClick(group.id)}
                 className={cn(
                   "w-full flex items-center justify-between px-6 py-3 transition-all group",
                   !group.subItems && activeView === group.id 
@@ -174,9 +190,9 @@ export default function Sidebar({
               >
                 <div className="flex items-center gap-3">
                   <group.icon className={cn("w-5 h-5", isActive ? "text-white" : "text-white/60 group-hover:text-white")} />
-                  {isOpen && <span className="font-medium uppercase text-sm tracking-wide">{group.label}</span>}
+                  {(isOpen || isDrawer) && <span className="font-medium uppercase text-sm tracking-wide">{group.label}</span>}
                 </div>
-                {isOpen && group.subItems && (
+                {(isOpen || isDrawer) && group.subItems && (
                   <motion.div
                     animate={{ rotate: isExpanded ? 180 : 0 }}
                     transition={{ duration: 0.2 }}
@@ -186,7 +202,7 @@ export default function Sidebar({
                 )}
               </button>
 
-              {isOpen && group.subItems && (
+              {(isOpen || isDrawer) && group.subItems && (
                 <AnimatePresence initial={false}>
                   {isExpanded && (
                     <motion.div
@@ -198,7 +214,7 @@ export default function Sidebar({
                       {group.subItems.map((item) => (
                         <button
                           key={item.id}
-                          onClick={() => setActiveView(item.id)}
+                          onClick={() => handleNavClick(item.id)}
                           className={cn(
                             "w-full text-left pl-14 pr-6 py-2.5 text-sm transition-all",
                             activeView === item.id 
@@ -219,7 +235,7 @@ export default function Sidebar({
       </nav>
 
       <div className="p-4 border-t border-white/10 bg-[#005b70]/50">
-        {isOpen && user && (
+        {(isOpen || isDrawer) && user && (
           <div className="flex items-center gap-3 p-2 rounded-xl bg-white/5 mb-4">
             <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden border border-white/20">
               {user.photoURL ? (
@@ -238,13 +254,48 @@ export default function Sidebar({
           onClick={handleLogout}
           className={cn(
             "w-full flex items-center gap-3 px-6 py-3 text-white/70 hover:bg-red-500/20 hover:text-red-200 transition-all rounded-lg",
-            !isOpen && "justify-center px-0"
+            !(isOpen || isDrawer) && "justify-center px-0"
           )}
         >
           <LogOut className="w-5 h-5" />
-          {isOpen && <span className="font-medium">Logout</span>}
+          {(isOpen || isDrawer) && <span className="font-medium">Logout</span>}
         </button>
       </div>
-    </aside>
+    </>
+  );
+
+  return (
+    <>
+      {/* Desktop Sidebar */}
+      <aside 
+        className={cn(
+          "hidden md:flex bg-[#006d87] transition-all duration-300 flex-col z-20 shadow-xl",
+          isOpen ? "w-72" : "w-20"
+        )}
+      >
+        {renderNavItems(false)}
+      </aside>
+
+      {/* Mobile Overlay Drawer */}
+      <AnimatePresence>
+        {isMobileOpen && (
+          <div 
+            className="md:hidden fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100] flex"
+            onClick={() => setIsMobileOpen?.(false)}
+          >
+            <motion.div
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="w-80 max-w-[85vw] bg-[#006d87] h-full flex flex-col shadow-2xl overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {renderNavItems(true)}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }

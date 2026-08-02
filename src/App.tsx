@@ -31,7 +31,9 @@ import {
   PawPrint,
   AlertCircle,
   ArrowLeftRight,
-  ExternalLink
+  ExternalLink,
+  Stethoscope,
+  Menu
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
@@ -102,6 +104,7 @@ function AppContent() {
   const activeView = getViewFromPath(location.pathname);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
 
   const navigateToView = (nextView: ViewId | string) => {
@@ -470,6 +473,8 @@ function AppContent() {
         <Sidebar 
           isOpen={isSidebarOpen}
           setIsOpen={setIsSidebarOpen}
+          isMobileOpen={isMobileMenuOpen}
+          setIsMobileOpen={setIsMobileMenuOpen}
           activeView={activeView}
           setActiveView={navigateToView}
           expandedGroups={expandedGroups}
@@ -478,7 +483,7 @@ function AppContent() {
         />
 
         {/* Main Content */}
-        <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+        <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative pb-14 md:pb-0">
           {quotaExceeded && (
             <div className="bg-rose-500 text-white px-6 py-3 flex items-between justify-between gap-4 animate-in slide-in-from-top duration-300">
               <div className="flex items-center gap-3">
@@ -501,10 +506,11 @@ function AppContent() {
             setActiveView={navigateToView} 
             onBack={handleBack}
             canGoBack={true}
+            onToggleMobileMenu={() => setIsMobileMenuOpen(prev => !prev)}
           />
 
           {/* View Content with Multi-page Router & Code-Splitting */}
-          <div className="flex-1 overflow-y-auto p-8">
+          <div className="flex-1 overflow-y-auto p-3 sm:p-5 md:p-8 pb-24 md:pb-8">
             <AnimatePresence mode="wait">
               <motion.div
                 key={location.pathname}
@@ -621,6 +627,33 @@ function AppContent() {
             ))}
           </div>
         </motion.div>
+
+        {/* Mobile Bottom Navigation Bar for Admin */}
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-200 z-[90] flex items-center justify-around py-2 px-1 shadow-lg">
+          {[
+            { id: 'dashboard', label: 'หน้าแรก', icon: LayoutDashboard },
+            { id: 'opd', label: 'OPD', icon: Stethoscope },
+            { id: 'patients', label: 'สัตว์เลี้ยง', icon: Users },
+            { id: 'pos', label: 'POS/ชำระเงิน', icon: CreditCard },
+            { id: 'menu', label: 'เมนูทั้งหมด', icon: Menu, action: () => setIsMobileMenuOpen(true) },
+          ].map((item) => {
+            const isActive = activeView === item.id;
+            const Icon = item.icon;
+            return (
+              <button
+                key={`mob-nav-${item.id}`}
+                onClick={() => item.action ? item.action() : navigateToView(item.id)}
+                className={cn(
+                  "flex flex-col items-center justify-center gap-1 py-1.5 px-2 rounded-2xl transition-all cursor-pointer flex-1 min-w-0",
+                  isActive ? "text-[#00b4d8] font-bold bg-sky-50" : "text-slate-500 hover:text-slate-800"
+                )}
+              >
+                <Icon className={cn("w-5 h-5", isActive ? "text-[#00b4d8]" : "text-slate-500")} />
+                <span className="text-[10px] font-medium tracking-tight truncate max-w-full">{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
       </div>
     </ErrorBoundary>
   );

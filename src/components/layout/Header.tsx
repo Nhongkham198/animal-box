@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Bell, Settings, Package, Calendar, Clock, X, PawPrint, ArrowLeft } from 'lucide-react';
+import { Search, Bell, Settings, Package, Calendar, Clock, X, PawPrint, ArrowLeft, Menu } from 'lucide-react';
 import { 
   db, 
   collection, 
@@ -24,6 +24,7 @@ interface HeaderProps {
   setActiveView: (view: any) => void;
   onBack?: () => void;
   canGoBack?: boolean;
+  onToggleMobileMenu?: () => void;
 }
 
 interface Notification {
@@ -38,7 +39,7 @@ interface Notification {
   status?: string;
 }
 
-export default function Header({ activeView, setActiveView, onBack, canGoBack }: HeaderProps) {
+export default function Header({ activeView, setActiveView, onBack, canGoBack, onToggleMobileMenu }: HeaderProps) {
   const { isAuthReady, isStaff } = useAuth();
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -254,16 +255,53 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack }:
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const [productSettingMode, setProductSettingMode] = useState<'list' | 'edit'>('list');
+
+  useEffect(() => {
+    const handleModeChange = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail) {
+        setProductSettingMode(customEvent.detail);
+      }
+    };
+    window.addEventListener('product-setting-mode-change', handleModeChange);
+    return () => {
+      window.removeEventListener('product-setting-mode-change', handleModeChange);
+    };
+  }, []);
+
   const location = useLocation();
   const routeInfo = VIEW_LABELS[location.pathname] || { title: activeView.replace(/-/g, ' ') };
 
+  const isProductSetting = location.pathname === '/settings/product';
+  const shouldShowBack = isProductSetting ? (productSettingMode === 'edit') : canGoBack;
+
+  const handleBackClick = () => {
+    if (isProductSetting && productSettingMode === 'edit') {
+      window.dispatchEvent(new CustomEvent('app-header-back'));
+      return;
+    }
+    if (onBack) {
+      onBack();
+    }
+  };
+
   return (
-    <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 flex-shrink-0 relative z-40">
-      <div className="flex items-center gap-4">
-        {canGoBack && onBack && (
+    <header className="h-16 md:h-20 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-8 flex-shrink-0 relative z-40">
+      <div className="flex items-center gap-2.5 md:gap-4">
+        {onToggleMobileMenu && (
+          <button 
+            onClick={onToggleMobileMenu}
+            className="md:hidden p-2 hover:bg-slate-100 rounded-xl text-slate-700 transition-all flex items-center justify-center border border-slate-200 shadow-2xs bg-white"
+            title="เปิดเมนู"
+          >
+            <Menu className="w-5 h-5 text-slate-700" />
+          </button>
+        )}
+        {shouldShowBack && onBack && (
           <button 
             id="header-back-btn"
-            onClick={onBack}
+            onClick={handleBackClick}
             className="p-2 hover:bg-slate-100 rounded-xl text-slate-500 transition-all flex items-center justify-center border border-slate-200 shadow-sm bg-white hover:scale-105 active:scale-95"
             title="ย้อนกลับ"
           >
@@ -278,7 +316,7 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack }:
               <span className="text-[#00b4d8]">{routeInfo.title}</span>
             </div>
           )}
-          <h2 className="text-xl font-bold text-slate-900 capitalize">
+          <h2 className="text-base md:text-xl font-bold text-slate-900 capitalize truncate max-w-[180px] sm:max-w-xs md:max-w-none">
             {routeInfo.title}
           </h2>
         </div>

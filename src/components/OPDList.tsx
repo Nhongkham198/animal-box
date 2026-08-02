@@ -33,7 +33,9 @@ import {
   GripVertical,
   Lock,
   Settings,
-  Pencil
+  Pencil,
+  FlaskConical,
+  ExternalLink
 } from 'lucide-react';
 import { 
   db, 
@@ -1405,17 +1407,32 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setNewRecord(prev => ({
-          ...prev,
-          attachments: [...prev.attachments, reader.result as string]
-        }));
-      };
-      reader.readAsDataURL(file);
+    handleMultipleFileUpload(e);
+  };
+
+  const handleMultipleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      Array.from(files).forEach((file) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (reader.result) {
+            setNewRecord(prev => ({
+              ...prev,
+              attachments: [...(prev.attachments || []), reader.result as string]
+            }));
+          }
+        };
+        reader.readAsDataURL(file);
+      });
     }
+  };
+
+  const removeAttachment = (indexToRemove: number) => {
+    setNewRecord(prev => ({
+      ...prev,
+      attachments: (prev.attachments || []).filter((_, idx) => idx !== indexToRemove)
+    }));
   };
 
   const getCategoryIcon = (category: string) => {
@@ -2501,6 +2518,75 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                   placeholder="ผลการตรวจร่างกายเบื้องต้นหรือข้อความสรุปเพิ่มเติม..."
                                 />
                               </div>
+                            </div>
+
+                            {/* Lab Results / File Upload Section */}
+                            <div className="p-3.5 bg-gradient-to-br from-amber-50/80 to-orange-50/50 rounded-2xl border border-amber-200/80 space-y-3 shadow-xs">
+                              <div className="flex items-center justify-between">
+                                <label className="text-xs font-black text-amber-800 uppercase tracking-widest flex items-center gap-2">
+                                  <FlaskConical className="w-4 h-4 text-amber-600" /> ผลตรวจทางห้องปฏิบัติการ (LAB RESULTS)
+                                </label>
+                                <label className="cursor-pointer bg-white hover:bg-amber-100/60 text-amber-900 border border-amber-300 font-bold text-xs px-3.5 py-1.5 rounded-xl transition-all shadow-xs flex items-center gap-1.5 active:scale-95">
+                                  <Upload className="w-3.5 h-3.5 text-amber-600" />
+                                  <span>แนบ PDF / รูปภาพ</span>
+                                  <input 
+                                    type="file" 
+                                    accept="image/*,application/pdf"
+                                    multiple
+                                    onChange={handleMultipleFileUpload} 
+                                    className="hidden" 
+                                  />
+                                </label>
+                              </div>
+
+                              {/* Uploaded Attachments Grid */}
+                              {newRecord.attachments && newRecord.attachments.length > 0 ? (
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1">
+                                  {newRecord.attachments.map((item, idx) => {
+                                    const isPdf = item.includes('application/pdf') || item.includes('.pdf');
+                                    return (
+                                      <div key={idx} className="relative group bg-white p-2 rounded-xl border border-amber-200 shadow-2xs flex items-center gap-2 overflow-hidden">
+                                        {isPdf ? (
+                                          <div className="w-9 h-9 rounded-lg bg-rose-100 text-rose-600 flex items-center justify-center shrink-0 font-bold">
+                                            <FileText className="w-5 h-5" />
+                                          </div>
+                                        ) : (
+                                          <div className="w-9 h-9 rounded-lg bg-slate-100 overflow-hidden shrink-0 border border-slate-200">
+                                            <img src={item} alt={`Lab ${idx + 1}`} className="w-full h-full object-cover" />
+                                          </div>
+                                        )}
+                                        <div className="flex-1 min-w-0 text-left">
+                                          <p className="text-[11px] font-bold text-slate-700 truncate">
+                                            {isPdf ? `Lab_Result_${idx + 1}.pdf` : `Lab_Image_${idx + 1}`}
+                                          </p>
+                                          <a 
+                                            href={item} 
+                                            target="_blank" 
+                                            rel="noreferrer"
+                                            className="text-[10px] font-semibold text-amber-600 hover:underline inline-flex items-center gap-1"
+                                          >
+                                            ดูไฟล์เต็ม <ExternalLink className="w-2.5 h-2.5" />
+                                          </a>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => removeAttachment(idx)}
+                                          className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                          title="ลบไฟล์"
+                                        >
+                                          <X className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="text-center py-2.5 px-4 border border-dashed border-amber-300 rounded-xl bg-white/70">
+                                  <p className="text-xs font-medium text-amber-800/80">
+                                    ยังไม่มีผลแลปแนบ กดปุ่ม <span className="font-bold text-amber-900">"แนบ PDF / รูปภาพ"</span> เพื่อเพิ่มเอกสารผลตรวจ
+                                  </p>
+                                </div>
+                              )}
                             </div>
 
                             {/* Treatment Section */}
@@ -4499,6 +4585,31 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                      <div className="bg-indigo-50/30 p-4 rounded-2xl border border-indigo-100/30">
                                        <span className="text-[8px] font-black text-indigo-600 uppercase tracking-[0.2em] block mb-1.5">PE: Physical Examination</span>
                                        <p className="text-xs font-bold text-slate-700 leading-relaxed">{rec.physicalExaminationPe}</p>
+                                     </div>
+                                   )}
+                                   {rec.attachments && rec.attachments.length > 0 && (
+                                     <div className="bg-amber-50/40 p-3.5 rounded-2xl border border-amber-200/60">
+                                       <span className="text-[8px] font-black text-amber-700 uppercase tracking-[0.2em] block mb-2 flex items-center gap-1.5">
+                                         <FlaskConical className="w-3 h-3 text-amber-600" /> LAB RESULTS / เอกสารแนบ ({rec.attachments.length})
+                                       </span>
+                                       <div className="flex flex-wrap gap-2">
+                                         {rec.attachments.map((attItem: string, attIdx: number) => {
+                                           const isPdf = attItem.includes('application/pdf') || attItem.includes('.pdf');
+                                           return (
+                                             <a
+                                               key={attIdx}
+                                               href={attItem}
+                                               target="_blank"
+                                               rel="noreferrer"
+                                               className="flex items-center gap-1.5 px-3 py-1.5 bg-white rounded-xl border border-amber-200 text-xs font-bold text-amber-900 hover:bg-amber-100/60 transition-all shadow-2xs"
+                                             >
+                                               {isPdf ? <FileText className="w-4 h-4 text-rose-500" /> : <FlaskConical className="w-4 h-4 text-amber-500" />}
+                                               <span>{isPdf ? `Lab_PDF_${attIdx + 1}` : `Lab_Image_${attIdx + 1}`}</span>
+                                               <ExternalLink className="w-3 h-3 text-amber-600 ml-0.5" />
+                                             </a>
+                                           );
+                                         })}
+                                       </div>
                                      </div>
                                    )}
                                    {rec.treatmentTx && (
