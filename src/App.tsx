@@ -75,6 +75,7 @@ const ContactSetting = lazy(() => import('./components/ContactSetting'));
 const ActivitiesSetting = lazy(() => import('./components/ActivitiesSetting'));
 const RewardSetting = lazy(() => import('./components/RewardSetting'));
 const ProductSetting = lazy(() => import('./components/ProductSetting'));
+const FoodSetting = lazy(() => import('./components/FoodSetting'));
 const UsageSetting = lazy(() => import('./components/UsageSetting'));
 const PaymentMethodSetting = lazy(() => import('./components/PaymentMethodSetting'));
 const CustomerBookingForm = lazy(() => import('./components/CustomerBookingForm'));
@@ -558,6 +559,7 @@ function AppContent() {
                     <Route path="/settings/activities" element={<ProtectedRoute><ActivitiesSetting /></ProtectedRoute>} />
                     <Route path="/settings/reward" element={<ProtectedRoute><RewardSetting /></ProtectedRoute>} />
                     <Route path="/settings/product" element={<ProtectedRoute><ProductSetting /></ProtectedRoute>} />
+                    <Route path="/settings/food" element={<ProtectedRoute><FoodSetting /></ProtectedRoute>} />
                     <Route path="/settings/room-rates" element={<ProtectedRoute><UsageSetting /></ProtectedRoute>} />
                     <Route path="/settings/payment-methods" element={<ProtectedRoute><PaymentMethodSetting /></ProtectedRoute>} />
                     <Route path="/settings/printer" element={<ProtectedRoute><PrinterSetting /></ProtectedRoute>} />

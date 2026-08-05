@@ -42,6 +42,8 @@ interface InventoryItem {
   name?: string;
   itemName?: string;
   type?: string;
+  productType?: string;
+  activityGroup?: string;
   unit?: string;
   unitPrice?: number;
   initialStock?: number;
@@ -68,8 +70,30 @@ export default function Inventory() {
   const [activeCategory, setActiveCategory] = useState<string>('All');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Categories based on the requested screenshot
-  const categories = ['All', 'Anti-parasite', 'Vaccine', 'Medicine', 'Supplies', 'Food', 'Other'];
+  // Categories based on Excel sheets, Activity Groups, and requested screenshot
+  const defaultCategories = [
+    'ALL',
+    'ยากิน (เม็ด)',
+    'ยากิน (น้ำ)',
+    'ยาหยด',
+    'ยาฉีด',
+    'ยาทา',
+    'ยาหยอดตา',
+    'ยาพ่น',
+    'ANTI-PARASITE',
+    'VACCINE',
+    'MEDICINE',
+    'SUPPLIES',
+    'FOOD',
+    'OTHER'
+  ];
+
+  // Dynamically extract any unique Activity Group or category from inventory items
+  const dynamicGroups = Array.from(new Set(
+    items.map(i => i.activityGroup || i.productType || i.type || i.category).filter(Boolean) as string[]
+  ));
+
+  const categories = Array.from(new Set([...defaultCategories, ...dynamicGroups]));
 
   // Import Result State
   const [importSummary, setImportSummary] = useState<{
@@ -122,6 +146,8 @@ export default function Inventory() {
         unitPrice: newItem.unitPrice,
         minStock: newItem.minStock,
         type: newItem.category,
+        productType: newItem.category,
+        activityGroup: newItem.category,
         category: newItem.category,
         isInStock: true,
         createdAt: Timestamp.now()
@@ -154,8 +180,48 @@ export default function Inventory() {
   const filteredItems = items.filter(i => {
     const matchesSearch = (i.name || i.itemName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
                          (i.barcode && i.barcode.includes(searchQuery));
-    const matchesCategory = activeCategory === 'All' || 
-                           (i.type || i.category) === activeCategory;
+
+    if (activeCategory === 'ALL' || activeCategory === 'All' || activeCategory === 'ทั้งหมด') {
+      return matchesSearch;
+    }
+
+    const rawGroup = i.activityGroup || i.productType || i.type || i.category || '';
+    const itemGroup = rawGroup.toLowerCase();
+    const catLower = activeCategory.toLowerCase();
+
+    // Direct match or exact match
+    let matchesCategory = itemGroup === catLower || rawGroup === activeCategory;
+
+    if (!matchesCategory) {
+      if (activeCategory === 'ยากิน (เม็ด)') {
+        matchesCategory = itemGroup.includes('ยากิน (เม็ด)') || (itemGroup.includes('กิน') && (itemGroup.includes('เม็ด') || !itemGroup.includes('น้ำ'))) || itemGroup.includes('oral medicine') || itemGroup.includes('ยาเม็ด');
+      } else if (activeCategory === 'ยากิน (น้ำ)') {
+        matchesCategory = itemGroup.includes('ยากิน (น้ำ)') || itemGroup.includes('น้ำ') || itemGroup.includes('syrup') || (itemGroup.includes('กิน') && itemGroup.includes('น้ำ'));
+      } else if (activeCategory === 'ยาหยด') {
+        matchesCategory = itemGroup.includes('หยด') || itemGroup.includes('spot-on') || itemGroup.includes('spot on');
+      } else if (activeCategory === 'ยาฉีด') {
+        matchesCategory = itemGroup.includes('ฉีด') || itemGroup.includes('inject');
+      } else if (activeCategory === 'ยาทา') {
+        matchesCategory = itemGroup.includes('ทา') || itemGroup.includes('topical');
+      } else if (activeCategory === 'ยาหยอดตา') {
+        matchesCategory = itemGroup.includes('ตา') || itemGroup.includes('eye');
+      } else if (activeCategory === 'ยาพ่น') {
+        matchesCategory = itemGroup.includes('พ่น') || itemGroup.includes('spray');
+      } else if (activeCategory === 'ANTI-PARASITE') {
+        matchesCategory = itemGroup.includes('anti-parasite') || itemGroup.includes('parasite') || itemGroup.includes('พยาธิ');
+      } else if (activeCategory === 'VACCINE') {
+        matchesCategory = itemGroup.includes('vaccine') || itemGroup.includes('วัคซีน');
+      } else if (activeCategory === 'MEDICINE') {
+        matchesCategory = itemGroup.includes('medicine') || itemGroup.includes('ยา');
+      } else if (activeCategory === 'SUPPLIES') {
+        matchesCategory = itemGroup.includes('supplies') || itemGroup.includes('เวชภัณฑ์');
+      } else if (activeCategory === 'FOOD') {
+        matchesCategory = itemGroup.includes('food') || itemGroup.includes('อาหาร');
+      } else if (activeCategory === 'OTHER') {
+        matchesCategory = itemGroup.includes('other') || itemGroup.includes('อื่นๆ');
+      }
+    }
+
     return matchesSearch && matchesCategory;
   });
 
@@ -192,30 +258,47 @@ export default function Inventory() {
 
         // Categories mapping based on sheets provided by user
         const sheetMappings: Record<string, string> = {
-          'ยาฉีด': 'Injectable Medicine',
-          'ยากิน': 'Oral Medicine',
-          'ใช้ในหู': 'Ear Care',
-          'ใช้กับตา': 'Eye Care',
+          'ยากิน (เม็ด)': 'ยากิน (เม็ด)',
+          'ยากิน (น้ำ)': 'ยากิน (น้ำ)',
+          'ยากิน': 'ยากิน (เม็ด)',
+          'ยาหยด': 'ยาหยด',
+          'ยาฉีด': 'ยาฉีด',
+          'ยาทา': 'ยาทา',
+          'ยาหยอดตา': 'ยาหยอดตา',
+          'ใช้กับตา': 'ยาหยอดตา',
+          'ยาพ่น': 'ยาพ่น',
+          'ใช้ในหู': 'ยาทา',
           'Testkit': 'Diagnostics'
         };
 
         // We'll process all sheets
         for (const sheetName of wb.SheetNames) {
-          const category = sheetMappings[sheetName] || 'General';
+          const sheetTabName = sheetName.trim();
+          const category = sheetMappings[sheetTabName] || sheetTabName;
           const ws = wb.Sheets[sheetName];
           const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+
+          let currentSubGroup = sheetTabName;
 
           // Skip header row (index 0)
           const rows = data.slice(1);
           
           for (const row of rows) {
-            // Mapping based on image structure:
-            // Col A (index 0): Name
-            // Col B (index 1): Unit info (e.g. 2 ml/ขวด)
-            // Col C (index 2): Price
-            const name = String(row[0] || '').trim();
-            let unitInfo = String(row[1] || '').trim();
-            let price = Number(row[2]) || 0;
+            const rawColA = String(row[0] || '').trim();
+            const rawColB = String(row[1] || '').trim();
+            const rawColC = row[2] !== undefined ? String(row[2]).trim() : '';
+            const rawColD = row[3] !== undefined ? String(row[3]).trim() : '';
+            const rawColE = row[4] !== undefined ? String(row[4]).trim() : '';
+
+            // Check if section sub-header row (Col A has text, Col B-E are empty)
+            if (rawColA && !rawColB && !rawColC && !rawColD && !rawColE) {
+              currentSubGroup = rawColA;
+              continue;
+            }
+
+            const name = rawColA;
+            let unitInfo = rawColB;
+            let price = Number(rawColC) || 0;
 
             // If Col B is numeric (e.g. 112) and Col C is 0/empty, Col B is actually the price
             if (unitInfo && !isNaN(Number(unitInfo)) && price === 0) {
@@ -246,6 +329,9 @@ export default function Inventory() {
                 itemName: fullItemName,
                 category: category,
                 type: category,
+                productType: category,
+                activityGroup: sheetTabName,
+                activitySubGroup: currentSubGroup,
                 unitPrice: price,
                 price: price,
                 unit: itemUnit,
@@ -628,10 +714,19 @@ export default function Inventory() {
                       value={newItem.category}
                       onChange={e => setNewItem({...newItem, category: e.target.value})}
                     >
-                      <option>Medicine</option>
-                      <option>Supplies</option>
-                      <option>Food</option>
-                      <option>Equipment</option>
+                      <option value="ยากิน (เม็ด)">ยากิน (เม็ด)</option>
+                      <option value="ยากิน (น้ำ)">ยากิน (น้ำ)</option>
+                      <option value="ยาหยด">ยาหยด</option>
+                      <option value="ยาฉีด">ยาฉีด</option>
+                      <option value="ยาทา">ยาทา</option>
+                      <option value="ยาหยอดตา">ยาหยอดตา</option>
+                      <option value="ยาพ่น">ยาพ่น</option>
+                      <option value="Anti-parasite">Anti-parasite</option>
+                      <option value="Vaccine">Vaccine</option>
+                      <option value="Medicine">Medicine</option>
+                      <option value="Supplies">Supplies</option>
+                      <option value="Food">Food</option>
+                      <option value="Other">Other</option>
                     </select>
                   </div>
                   <div className="space-y-2">

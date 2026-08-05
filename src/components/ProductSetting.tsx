@@ -69,10 +69,37 @@ const initialProducts: Product[] = [
   { id: '7', name: 'Bayovac® DHPPi+L', type: 'Vaccine', unit: 'ขวด', isInStock: true, currentStock: 0, initialStock: 0, minStock: 5 },
 ];
 
-const PRODUCT_TYPES = ['Anti-parasite', 'Vaccine', 'Medicine', 'Supplies', 'Food', 'Other'];
+const PRODUCT_TYPES = [
+  'ยากิน (เม็ด)',
+  'ยากิน (น้ำ)',
+  'ยาหยด',
+  'ยาฉีด',
+  'ยาทา',
+  'ยาหยอดตา',
+  'ยาพ่น',
+  'Anti-parasite',
+  'Vaccine',
+  'Medicine',
+  'Supplies',
+  'Food',
+  'Other'
+];
 const UNITS = ['หลอด', 'ขวด', 'เม็ด', 'แผง', 'กล่อง', 'ถุง', 'กิโลกรัม', 'กรัม'];
 const ACTIVITY_GROUPS = ['ยาและเวชภัณฑ์', 'บริการ', 'แล็บ', 'ศัลยกรรม', 'อื่นๆ'];
-const ACTIVITY_SUB_GROUPS = ['ยาถ่ายพยาธิ', 'วัคซีนรวม', 'ยาฆ่าเชื้อ', 'ตรวจเลือด', 'อาบน้ำตัดขน'];
+const ACTIVITY_SUB_GROUPS = [
+  'ยาเห็บหมัด',
+  'ยาเชื้อรา',
+  'กระตุ้น',
+  'ยาละลายเสมหะ',
+  'ยาห้ามเลือด',
+  'บำรุง',
+  'กระดูกและข้อ',
+  'ยาถ่ายพยาธิ',
+  'วัคซีนรวม',
+  'ยาฆ่าเชื้อ',
+  'ตรวจเลือด',
+  'อาบน้ำตัดขน'
+];
 const PET_TYPES = ['Dog', 'Cat', 'Bird', 'Rabbit', 'Exotic'];
 const MEDICAL_USES = ['กิน', 'ทา', 'หยอดหู', 'หยอดตา', 'ฉีด'];
 const DOSAGE_UNITS = ['เม็ด', 'CC', 'ML', 'หยด', 'หลอด'];
@@ -99,6 +126,12 @@ export default function ProductSetting() {
       window.dispatchEvent(new CustomEvent('product-setting-mode-change', { detail: 'list' }));
     };
   }, [mode]);
+
+  const getProductKey = (n: string, pkg?: string) => {
+    const cleanN = (n || '').toLowerCase().trim();
+    const cleanP = (pkg || '').toLowerCase().trim();
+    return cleanP ? `${cleanN}___${cleanP}` : cleanN;
+  };
 
   // Sync with Firestore
   useEffect(() => {
@@ -218,6 +251,12 @@ export default function ProductSetting() {
     editingProduct?.activityGroup
   ])).filter(Boolean) as string[];
 
+  const availableActivitySubGroups = Array.from(new Set([
+    ...ACTIVITY_SUB_GROUPS,
+    ...products.map(p => p.activitySubGroup).filter(Boolean),
+    editingProduct?.activitySubGroup
+  ])).filter(Boolean) as string[];
+
   const availableMedicalUses = Array.from(new Set([
     ...MEDICAL_USES,
     ...products.map(p => p.drugLabel?.medicalUse).filter(Boolean),
@@ -288,6 +327,7 @@ export default function ProductSetting() {
       },
       drugLabel: {
         enabled: true,
+        mealsEnabled: true,
         medicalUse: '',
         position: '',
         dosage: 0,
@@ -349,8 +389,9 @@ export default function ProductSetting() {
         amount: 0.01,
         showInReceipt: true
       },
-      drugLabel: product.drugLabel || {
+      drugLabel: product.drugLabel ? { mealsEnabled: true, ...product.drugLabel } : {
         enabled: true,
+        mealsEnabled: true,
         medicalUse: '',
         position: '',
         dosage: 0,
@@ -576,7 +617,7 @@ export default function ProductSetting() {
       for (const [key, item] of importedProductsMap.entries()) {
         totalItems++;
 
-        const existingDbProduct = products.find(p => p.name.toLowerCase() === key);
+        const existingDbProduct = products.find(p => getProductKey(p.name, p.packageUnit) === key);
 
         if (existingDbProduct) {
           duplicateNames.push(item.name);
@@ -596,6 +637,7 @@ export default function ProductSetting() {
             unit: item.unit || existingDbProduct.unit || 'หน่วย',
             packageUnit: item.packageUnit || existingDbProduct.packageUnit || '',
             activityGroup: item.activityGroup || existingDbProduct.activityGroup || '',
+            activitySubGroup: item.activitySubGroup || existingDbProduct.activitySubGroup || '',
             drugLabel: {
               ...(existingDbProduct.drugLabel || { enabled: true }),
               medicalUse: item.medicalUse || existingDbProduct.drugLabel?.medicalUse || ''
@@ -619,6 +661,7 @@ export default function ProductSetting() {
           minStock: 5,
           isInStock: item.currentStock > 0,
           activityGroup: item.activityGroup,
+          activitySubGroup: item.activitySubGroup || '',
           drugLabel: {
             enabled: true,
             medicalUse: item.medicalUse,
@@ -681,6 +724,7 @@ export default function ProductSetting() {
           currentStock: number;
           expiryDates: string[];
           activityGroup: string;
+          activitySubGroup: string;
           medicalUse: string;
         }>();
 
@@ -720,9 +764,25 @@ export default function ProductSetting() {
               return match ? parseFloat(match[0]) : 0;
             };
 
-            const qty = cleanNumber(rawColE);
-            const cost = cleanNumber(rawColC);
-            const price = cleanNumber(rawColD);
+            const isColEDate = rawColE.includes('/') || rawColE.includes('-') || !isNaN(Date.parse(rawColE));
+
+            let qty = 0;
+            let cost = 0;
+            let price = 0;
+            let expiryDateVal = rawColF;
+
+            if (isColEDate || (!rawColF && rawColD !== '' && !isNaN(Number(rawColD)))) {
+              // Food Excel Format: Col C = Selling Price (ราคาขาย), Col D = Stock (จำนวนคงเหลือ), Col E = Expiry Date (วันหมดอายุ)
+              price = cleanNumber(rawColC);
+              qty = cleanNumber(rawColD);
+              expiryDateVal = rawColE;
+              cost = cleanNumber(rawColF);
+            } else {
+              // Standard 6-col format: Col C = Cost, Col D = Selling, Col E = Stock, Col F = Expiry
+              cost = cleanNumber(rawColC);
+              price = cleanNumber(rawColD);
+              qty = cleanNumber(rawColE);
+            }
 
             let productName = rawColA;
             const parsedUnit = extractUnitName(rawColB);
@@ -744,7 +804,7 @@ export default function ProductSetting() {
               if (price > 0) lastPrice = price;
             }
 
-            const key = productName.toLowerCase();
+            const key = getProductKey(productName, packageUnit);
             const existing = importedProductsMap.get(key);
 
             const finalCost = cost > 0 ? cost : (existing?.costPrice || lastCost);
@@ -764,6 +824,7 @@ export default function ProductSetting() {
                 currentStock: qty,
                 expiryDates: rawColF ? [rawColF] : [],
                 activityGroup: sheetTabName,
+                activitySubGroup: currentCategory,
                 medicalUse: sheetTabName
               });
             }
@@ -781,7 +842,7 @@ export default function ProductSetting() {
         }[] = [];
 
         for (const [key, item] of importedProductsMap.entries()) {
-          const existingDbProduct = products.find(p => p.name.toLowerCase() === key);
+          const existingDbProduct = products.find(p => getProductKey(p.name, p.packageUnit) === key);
           if (existingDbProduct && existingDbProduct.price > 0 && item.price > 0 && existingDbProduct.price !== item.price) {
             conflicts.push({
               key,
@@ -835,45 +896,7 @@ export default function ProductSetting() {
           </div>
         </div>
 
-        {/* Activity Type Selection */}
-        <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-8">
-          <div className="flex flex-col items-center gap-6">
-            <p className="text-sm font-bold text-slate-800">เลือกชนิด Activity</p>
-            <div className="flex items-center gap-20">
-              <label 
-                onClick={() => setEditingProduct({ ...editingProduct, type: 'product' })}
-                className="flex items-center gap-4 cursor-pointer group"
-              >
-                <div className={cn(
-                  "w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all",
-                  editingProduct.type === 'product' ? "border-[#00b4d8]" : "border-slate-200"
-                )}>
-                  {editingProduct.type === 'product' && <div className="w-3 h-3 rounded-full bg-[#00b4d8]" />}
-                </div>
-                <div className="text-center">
-                  <p className={cn("font-bold text-lg", editingProduct.type === 'product' ? "text-[#00b4d8]" : "text-slate-400")}>Product</p>
-                  <p className="text-xs text-slate-300">(ผลิตภัณฑ์)</p>
-                </div>
-              </label>
-              <div className="h-12 w-px bg-slate-100" />
-              <label 
-                onClick={() => setEditingProduct({ ...editingProduct, type: 'service' })}
-                className="flex items-center gap-4 cursor-pointer group"
-              >
-                <div className={cn(
-                  "w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all",
-                  editingProduct.type === 'service' ? "border-[#00b4d8]" : "border-slate-200"
-                )}>
-                  {editingProduct.type === 'service' && <div className="w-3 h-3 rounded-full bg-[#00b4d8]" />}
-                </div>
-                <div className="text-center">
-                  <p className={cn("font-bold text-lg", editingProduct.type === 'service' ? "text-[#00b4d8]" : "text-slate-400")}>Service</p>
-                  <p className="text-xs text-slate-300">(บริการ)</p>
-                </div>
-              </label>
-            </div>
-          </div>
-        </div>
+
 
         {/* Main Form */}
         <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-10 space-y-12">
@@ -1158,15 +1181,18 @@ export default function ProductSetting() {
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">Activity Sub Group <span className="text-red-500">*</span></label>
                     <div className="relative">
-                      <select 
-                        value={editingProduct.activitySubGroup}
+                      <input 
+                        type="text"
+                        list="activitySubGroupDatalist"
+                        placeholder="เลือก หรือ พิมพ์ Activity Sub Group (เช่น ยาเห็บหมัด, ยาเชื้อรา)"
+                        value={editingProduct?.activitySubGroup || ''}
                         onChange={(e) => setEditingProduct({ ...editingProduct, activitySubGroup: e.target.value })}
-                        className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 focus:ring-2 focus:ring-[#00b4d8] outline-none appearance-none font-medium"
-                      >
-                        <option value="">Activity Sub Group</option>
-                        {ACTIVITY_SUB_GROUPS.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                      <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        className="w-full pl-4 pr-10 py-3 rounded-xl border border-slate-100 bg-slate-50/50 focus:ring-2 focus:ring-[#00b4d8] outline-none font-medium text-slate-800 [&::-webkit-calendar-picker-indicator]:opacity-0"
+                      />
+                      <datalist id="activitySubGroupDatalist">
+                        {availableActivitySubGroups.map(s => <option key={s} value={s} />)}
+                      </datalist>
+                      <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                     </div>
                   </div>
                 </div>
@@ -1235,56 +1261,7 @@ export default function ProductSetting() {
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  <p className="text-sm font-bold text-slate-700">Status</p>
-                  {[
-                    { label: 'Appointment', key: 'appoint' },
-                    { label: 'OPD', key: 'opd' },
-                    { label: 'POS', key: 'pos' }
-                  ].map(item => (
-                    <div key={item.key} className="flex items-center gap-12">
-                      <p className="w-32 font-bold text-slate-600">{item.label}</p>
-                      <div className="flex gap-6">
-                        <label 
-                          onClick={() => setEditingProduct({
-                            ...editingProduct,
-                            status: {
-                              ...editingProduct.status,
-                              [item.key]: { ...editingProduct.status[item.key], active: !editingProduct.status[item.key].active }
-                            }
-                          })}
-                          className="flex items-center gap-2 cursor-pointer"
-                        >
-                          <div className={cn(
-                            "w-5 h-5 rounded border flex items-center justify-center transition-all",
-                            editingProduct.status[item.key].active ? "border-[#00b4d8] bg-[#00b4d8]" : "border-slate-300 bg-white"
-                          )}>
-                            {editingProduct.status[item.key].active && <Check className="w-3 h-3 text-white stroke-[4]" />}
-                          </div>
-                          <span className={cn("text-xs font-bold", editingProduct.status[item.key].active ? "text-[#00b4d8]" : "text-slate-400")}>Active</span>
-                        </label>
-                        <label 
-                          onClick={() => setEditingProduct({
-                            ...editingProduct,
-                            status: {
-                              ...editingProduct.status,
-                              [item.key]: { ...editingProduct.status[item.key], favorite: !editingProduct.status[item.key].favorite }
-                            }
-                          })}
-                          className="flex items-center gap-2 cursor-pointer"
-                        >
-                          <div className={cn(
-                            "w-5 h-5 rounded border flex items-center justify-center transition-all",
-                            editingProduct.status[item.key].favorite ? "border-[#00b4d8] bg-[#00b4d8]" : "border-slate-300 bg-white"
-                          )}>
-                            {editingProduct.status[item.key].favorite && <Check className="w-3 h-3 text-white stroke-[4]" />}
-                          </div>
-                          <span className={cn("text-xs font-bold", editingProduct.status[item.key].favorite ? "text-[#00b4d8]" : "text-slate-400")}>Favorite</span>
-                        </label>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+
 
                 <div className="flex items-center gap-8 pt-4">
                   <p className="font-bold text-slate-700">ภาษีมูลค่าเพิ่ม</p>
@@ -1479,8 +1456,41 @@ export default function ProductSetting() {
                 <div className="space-y-8">
                   {/* Timing Section */}
                   <div className="flex flex-col lg:flex-row lg:items-start gap-4">
-                    <p className="text-sm font-bold text-slate-700 w-32 shrink-0 pt-3">เวลา</p>
-                    <div className="flex flex-wrap gap-x-12 gap-y-6 flex-1">
+                    <div className="w-32 shrink-0 pt-1 space-y-2">
+                      <p className="text-sm font-bold text-slate-700">เวลา</p>
+                      {/* Meal Selection Toggle Button */}
+                      <div 
+                        onClick={() => {
+                          const isMealOn = editingProduct.drugLabel?.mealsEnabled ?? true;
+                          setEditingProduct({
+                            ...editingProduct,
+                            drugLabel: {
+                              ...editingProduct.drugLabel,
+                              mealsEnabled: !isMealOn
+                            }
+                          });
+                        }}
+                        className="flex items-center gap-2 cursor-pointer select-none group"
+                        title="เปิด/ปิด การเลือกมื้ออาหาร"
+                      >
+                        <div className={cn(
+                          "w-9 h-5 rounded-full transition-colors relative flex items-center px-0.5",
+                          (editingProduct.drugLabel?.mealsEnabled ?? true) ? "bg-[#00b4d8]" : "bg-slate-300"
+                        )}>
+                          <div className={cn(
+                            "w-4 h-4 rounded-full bg-white shadow-md transition-transform transform",
+                            (editingProduct.drugLabel?.mealsEnabled ?? true) ? "translate-x-4" : "translate-x-0"
+                          )} />
+                        </div>
+                        <span className="text-xs font-bold text-slate-500 group-hover:text-slate-700">
+                          {(editingProduct.drugLabel?.mealsEnabled ?? true) ? "เปิดใช้งาน" : "ไม่ใช้งาน"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className={cn(
+                      "flex flex-wrap gap-x-12 gap-y-6 flex-1 transition-all duration-200",
+                      !(editingProduct.drugLabel?.mealsEnabled ?? true) && "opacity-40 pointer-events-none"
+                    )}>
                       {[
                         { label: 'Before Meals', value: 'before' },
                         { label: 'After Meals', value: 'after' },
@@ -1518,7 +1528,10 @@ export default function ProductSetting() {
                   </div>
 
                   {/* Daily Slots */}
-                  <div className="flex flex-wrap gap-4 sm:ml-36">
+                  <div className={cn(
+                    "flex flex-wrap gap-4 sm:ml-36 transition-all duration-200",
+                    !(editingProduct.drugLabel?.mealsEnabled ?? true) && "opacity-40 pointer-events-none"
+                  )}>
                     {[
                       { label: 'เช้า', key: 'morning' },
                       { label: 'กลางวัน', key: 'noon' },

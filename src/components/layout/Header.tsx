@@ -273,11 +273,11 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack, o
   const location = useLocation();
   const routeInfo = VIEW_LABELS[location.pathname] || { title: activeView.replace(/-/g, ' ') };
 
-  const isProductSetting = location.pathname === '/settings/product';
-  const shouldShowBack = isProductSetting ? (productSettingMode === 'edit') : canGoBack;
+  const isProductOrFoodSetting = location.pathname === '/settings/product' || location.pathname === '/settings/food';
+  const shouldShowBack = isProductOrFoodSetting ? (productSettingMode === 'edit') : canGoBack;
 
   const handleBackClick = () => {
-    if (isProductSetting && productSettingMode === 'edit') {
+    if (isProductOrFoodSetting && productSettingMode === 'edit') {
       window.dispatchEvent(new CustomEvent('app-header-back'));
       return;
     }
