@@ -155,6 +155,9 @@ interface OPDItem {
   woundCareDescription?: string;
   anatomicalParts?: string[];
   eyeOrder?: string;
+  productId?: string;
+  itemsPerPackage?: number;
+  position?: string;
 }
 
 interface OPDRecord {
@@ -395,15 +398,35 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
 
   const selectMedication = (product: any) => {
     const drugLabel = product.drugLabel || {};
+    const itemPrice = typeof product.price === 'number' && product.price > 0 
+      ? product.price 
+      : (typeof product.unitPrice === 'number' && product.unitPrice > 0 ? product.unitPrice : (product.price || product.unitPrice || 0));
+    
+    const productCategory = product.activityGroup || product.productType || product.type || product.category || 'Medicine';
+
     setNewItem({
       ...newItem,
+      productId: product.id,
+      id: product.id,
       name: product.name,
-      price: product.price || 0,
-      category: product.type || 'Medicine',
-      unit: product.unit || drugLabel.dosageUnit || 'เม็ด',
+      price: itemPrice,
+      category: productCategory,
+      type: productCategory,
+      unit: drugLabel.dosageUnit || product.unit || 'เม็ด',
       dosage: drugLabel.dosage ? String(drugLabel.dosage) : '1',
-      usageMethod: drugLabel.medicalUse || 'กิน',
-      timingMeal: drugLabel.timing === 'before' ? 'Before' : (drugLabel.timing === 'after' ? 'After' : 'With'),
+      usageMethod: drugLabel.medicalUse || (
+        productCategory.includes('หยอดตา') ? 'หยอดตา' : (
+          productCategory.includes('ฉีด') ? 'ฉีด' : (
+            productCategory.includes('หยด') ? 'หยด' : (
+              productCategory.includes('ทา') ? 'ทา' : (
+                productCategory.includes('พ่น') ? 'พ่น' : 'กิน'
+              )
+            )
+          )
+        )
+      ),
+      position: drugLabel.position || '',
+      timingMeal: drugLabel.timing === 'before' ? 'Before' : (drugLabel.timing === 'after' ? 'After' : (drugLabel.timing === 'with' ? 'With' : 'After')),
       timingDetail: drugLabel.timingDetail || '',
       frequency: drugLabel.slots || {
         morning: false,
@@ -414,7 +437,8 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
       refrigerate: drugLabel.warnings?.fridge || false,
       shake: drugLabel.warnings?.shake || false,
       noEat: drugLabel.warnings?.noEat || false,
-      purpose: drugLabel.purpose || ''
+      purpose: drugLabel.purpose || '',
+      itemsPerPackage: product.itemsPerPackage || product.packageRatio || 1
     });
     setMedicationSearchQuery('');
     setShowMedicationSuggestions(false);
@@ -801,6 +825,51 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
           // Update queue item for merged patient if still in queue
           if (queueItem) {
             await updateDoc(doc(db, 'appointments', queueItem.id), { status: 'Completed' });
+          }
+        }
+
+        // 4. Stock deduction for all items in main record & merged records when completed
+        const allItemsToDeduct = [...(newRecord.items || [])];
+        for (const merged of mergedBillingRecords) {
+          if (merged.items) {
+            allItemsToDeduct.push(...merged.items);
+          }
+        }
+
+        for (const item of allItemsToDeduct) {
+          if (!item.name || !item.quantity || item.quantity <= 0) continue;
+          
+          const invProduct = inventoryProducts.find(p => 
+            (item.productId && p.id === item.productId) || 
+            (item.id && p.id === item.id) || 
+            (p.name && item.name && p.name.trim().toLowerCase() === item.name.trim().toLowerCase())
+          );
+
+          if (invProduct) {
+            let deductQty = Number(item.quantity) || 0;
+            
+            const itemsPerPackage = Number(invProduct.itemsPerPackage || invProduct.packageRatio || item.itemsPerPackage || 1);
+            if (itemsPerPackage > 1) {
+              const itemUnit = (item.unit || '').trim().toLowerCase();
+              const stockUnit = (invProduct.stockUnit || invProduct.packageUnit || invProduct.unit || '').trim().toLowerCase();
+              
+              if (itemUnit !== stockUnit && (itemUnit === 'เม็ด' || itemUnit === 'แคปซูล' || itemUnit === 'ชิ้น' || itemUnit === 'ml' || itemUnit === 'ซีซี' || itemUnit === 'หลอด')) {
+                deductQty = deductQty / itemsPerPackage;
+              }
+            }
+
+            const currentStock = Number(invProduct.currentStock) || 0;
+            const newStock = Math.max(0, currentStock - deductQty);
+
+            try {
+              await updateDoc(doc(db, 'inventory', invProduct.id), {
+                currentStock: newStock,
+                isInStock: newStock > 0,
+                updatedAt: serverTimestamp()
+              });
+            } catch (err) {
+              console.error("Error deducting stock for product:", invProduct.name, err);
+            }
           }
         }
       }
@@ -1328,7 +1397,13 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
 
   const addItem = () => {
     if (!newItem.name) return;
-    const itemToAdd = { ...newItem, id: crypto.randomUUID(), price: newItem.price || 0, petId: targetPetId };
+    const itemToAdd = { 
+      ...newItem, 
+      id: crypto.randomUUID(), 
+      productId: newItem.productId || newItem.id, 
+      price: newItem.price || 0, 
+      petId: targetPetId 
+    };
 
     if (targetPetId === newRecord.patientId) {
       setNewRecord((prev: any) => {
@@ -2711,7 +2786,7 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                       : "bg-slate-50 text-slate-400 border-slate-100 hover:bg-slate-100"
                                   )}
                                 >
-                                  {t}
+                                  {t === 'Oral' ? 'ป้ายฉลากสั่งที่พิมพ์' : (t === 'Injection' ? 'รายการยาที่คิดเงิน' : t)}
                                 </button>
                               ))}
                             </div>
@@ -3141,44 +3216,176 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{pet.name}'s Items</span>
                                 </div>
                               )}
-                              <div className="space-y-3">
-                                {pet.items.map((itemValue: any) => (
-                                  <div key={itemValue.id} className="flex items-center justify-between p-5 bg-white border border-slate-100 rounded-[1.5rem] shadow-sm group hover:border-emerald-200 transition-all">
-                                    <div className="flex items-center gap-5 flex-1 cursor-pointer" onClick={() => editItem(itemValue)}>
-                                      <div className={cn(
-                                        "w-12 h-12 rounded-[1rem] flex items-center justify-center transition-colors",
-                                        itemValue.type === 'Oral' ? "bg-amber-50 text-amber-500" : (itemValue.type === 'Injection' ? "bg-rose-50 text-rose-500" : "bg-sky-50 text-sky-500")
-                                      )}>
-                                        {itemValue.type === 'Oral' ? <Activity className="w-6 h-6" /> : (itemValue.type === 'Injection' ? <Syringe className="w-6 h-6" /> : <Stethoscope className="w-6 h-6" />)}
-                                      </div>
-                                      <div>
-                                        <div className="flex items-center gap-2">
-                                          <p className="text-sm font-bold text-slate-800 group-hover:text-emerald-600 transition-colors">{itemValue.name}</p>
-                                          <span className={cn(
-                                            "text-[8px] font-black uppercase px-2 py-0.5 rounded-full border",
-                                            itemValue.type === 'Oral' ? "border-amber-200 text-amber-500" : (itemValue.type === 'Injection' ? "border-rose-200 text-rose-500" : "border-sky-200 text-sky-500")
-                                          )}>
-                                            {itemValue.type}
-                                          </span>
+                                <div className="space-y-3">
+                                  {pet.items.map((itemValue: any) => (
+                                    itemValue.type === 'Oral' ? (
+                                      <div key={itemValue.id} className="border-4 border-slate-900 rounded-[2rem] p-6 bg-white flex flex-col gap-4 text-slate-950 relative shadow-sm font-sans my-2">
+                                        {/* Row 1: Pet Name, HN, Age */}
+                                        <div className="grid grid-cols-3 gap-x-4 gap-y-1.5 border-b border-dashed border-slate-100 pb-1.5">
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">ชื่อสัตว์เลี้ยง</span>
+                                            <span className="border-b border-dashed border-slate-300 px-1 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0">
+                                              {selectedPatient?.name || newRecord.petName || pet.name || '-'}
+                                            </span>
+                                          </div>
+                                          
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">HN</span>
+                                            <span className="border-b border-dashed border-slate-300 px-1 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0">
+                                              {selectedPatient?.hn || '-'}
+                                            </span>
+                                          </div>
+                                          
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">อายุ</span>
+                                            <span className="border-b border-dashed border-slate-300 px-1 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0 whitespace-nowrap">
+                                              {calculateAge(selectedPatient?.birthDate)}
+                                            </span>
+                                          </div>
                                         </div>
-                                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Qty: {itemValue.quantity} • {itemValue.price} THB each</p>
+
+                                        {/* Row 2: Owner Name, Date, Time */}
+                                        <div className="grid grid-cols-3 gap-x-4 gap-y-1.5 border-b border-dashed border-slate-100 pb-1.5">
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">ชื่อเจ้าของ</span>
+                                            <span className="border-b border-dashed border-slate-300 px-1 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0">
+                                              {selectedPatient?.ownerName || newRecord.ownerName || '-'}
+                                            </span>
+                                          </div>
+
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">ว/ด/ป/ป</span>
+                                            <span className="border-b border-dashed border-slate-300 px-1 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0">
+                                              {new Date().toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                            </span>
+                                          </div>
+
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            <span className="text-slate-500 font-extrabold whitespace-nowrap text-[11px] shrink-0">เวลา</span>
+                                            <span className="border-b border-dashed border-slate-300 px-1 flex-1 text-slate-800 text-center font-black text-xs truncate min-w-0">
+                                              {new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        {/* Row 3: Drug Name */}
+                                        <div className="flex flex-col items-center justify-center py-1">
+                                          <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest self-start">ชื่อยา</span>
+                                          <p className="text-base font-black text-slate-900 tracking-wide text-center">
+                                            {itemValue.name}
+                                          </p>
+                                        </div>
+
+                                        {/* Row 4: Dosage & Frequency */}
+                                        <div className="flex items-center justify-center gap-2 text-xs font-black text-slate-800 border-t border-dashed border-slate-100 pt-2">
+                                          <span>ทานครั้งละ</span>
+                                          <span className="underline decoration-slate-400 underline-offset-4 font-black text-sm">{itemValue.dosage || 1}</span>
+                                          <span>{itemValue.unit || 'เม็ด'}</span>
+                                          <span>วันละ</span>
+                                          <span className="underline decoration-slate-400 underline-offset-4 font-black text-sm">
+                                            {((itemValue.frequency?.morning ? 1 : 0) + (itemValue.frequency?.noon ? 1 : 0) + (itemValue.frequency?.evening ? 1 : 0) + (itemValue.frequency?.bedtime ? 1 : 0)) || 1}
+                                          </span>
+                                          <span>ครั้ง</span>
+                                        </div>
+
+                                        {/* Row 5: Meal Timing */}
+                                        <div className="flex items-center justify-center text-xs font-black text-slate-700 bg-slate-50/80 py-1.5 rounded-xl border border-slate-100">
+                                          {itemValue.timingMeal === 'Before' ? 'ก่อนอาหาร' : (itemValue.timingMeal === 'After' ? 'หลังอาหาร' : (itemValue.timingMeal === 'With' ? 'ทานพร้อมอาหาร' : 'กินตามเวลา'))}
+                                        </div>
+
+                                        {/* Row 6: Instructions / Warnings */}
+                                        <div className="flex flex-wrap items-center justify-center gap-2 text-[11px] font-extrabold text-rose-500 text-center">
+                                          {itemValue.refrigerate && <span>• เก็บในตู้เย็น</span>}
+                                          {itemValue.shake && <span>• เขย่าขวดก่อนใช้</span>}
+                                          {itemValue.onCondition && <span>• เมื่อมีอาการ</span>}
+                                          {itemValue.timingDetail ? <span>{itemValue.timingDetail}</span> : <span>ทานติดต่อกันจนหมด</span>}
+                                        </div>
+
+                                        {/* Row 7: Footer with logo, Qty, Price, Print & Delete button */}
+                                        <div className="flex items-center justify-between border-t border-slate-100 pt-3 mt-1">
+                                          <div className="flex items-center gap-2 min-w-0">
+                                            <img src={clinicLogo} alt="Clinic Logo" className="w-8 h-8 object-contain rounded-lg shrink-0" />
+                                            <div className="flex flex-col min-w-0">
+                                              <span className="font-black text-slate-800 text-[10px] truncate">{clinicName}</span>
+                                              <span className="text-[8px] font-bold text-slate-400 truncate">{clinicAddress}</span>
+                                              <span className="text-[8px] font-bold text-slate-400">Tel: {clinicPhone}</span>
+                                            </div>
+                                          </div>
+
+                                          <div className="flex items-center gap-3 shrink-0">
+                                            <div className="flex flex-col gap-0.5 items-end">
+                                              <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">จำนวนบิล</span>
+                                              <span className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-black text-center min-w-[32px]">
+                                                {itemValue.quantity}
+                                              </span>
+                                            </div>
+
+                                            <div className="flex flex-col gap-0.5 items-end">
+                                              <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">ราคา</span>
+                                              <div className="flex items-center gap-1">
+                                                <span className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-black text-center min-w-[48px]">
+                                                  {(itemValue.price * itemValue.quantity).toLocaleString()}
+                                                </span>
+                                                <span className="text-[9px] font-bold text-slate-400 uppercase">THB</span>
+                                              </div>
+                                            </div>
+
+                                            <button 
+                                              type="button"
+                                              onClick={() => printPrescriptionLabel(itemValue)}
+                                              className="px-3 py-1.5 bg-slate-950 hover:bg-slate-900 border border-slate-950 text-white rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1 shadow-sm shrink-0 active:scale-95"
+                                            >
+                                              <Printer className="w-3.5 h-3.5" /> ปริ้นส์
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => removeItem(itemValue.id, pet.patientId)}
+                                              className="p-1.5 text-slate-300 hover:text-rose-500 transition-colors"
+                                            >
+                                              <Trash2 className="w-4 h-4" />
+                                            </button>
+                                          </div>
+                                        </div>
                                       </div>
-                                    </div>
-                                    <div className="flex items-center gap-6">
-                                      <span className="text-sm font-black text-slate-900">{(itemValue.price * itemValue.quantity).toLocaleString()} THB</span>
-                                      <div className="flex items-center gap-2">
-                                        <button 
-                                          type="button"
-                                          onClick={() => removeItem(itemValue.id, pet.patientId)}
-                                          className="p-2 text-slate-200 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
-                                        >
-                                          <Trash2 className="w-5 h-5" />
-                                        </button>
+                                    ) : (
+                                      <div key={itemValue.id} className="flex items-center justify-between p-5 bg-white border border-slate-100 rounded-[1.5rem] shadow-sm group hover:border-emerald-200 transition-all">
+                                        <div className="flex items-center gap-5 flex-1 cursor-pointer" onClick={() => editItem(itemValue)}>
+                                          <div className={cn(
+                                            "w-12 h-12 rounded-[1rem] flex items-center justify-center transition-colors",
+                                            itemValue.type === 'Oral' ? "bg-amber-50 text-amber-500" : (itemValue.type === 'Injection' ? "bg-rose-50 text-rose-500" : "bg-sky-50 text-sky-500")
+                                          )}>
+                                            {itemValue.type === 'Oral' ? <Activity className="w-6 h-6" /> : (itemValue.type === 'Injection' ? <Syringe className="w-6 h-6" /> : <Stethoscope className="w-6 h-6" />)}
+                                          </div>
+                                          <div>
+                                            <div className="flex items-center gap-2">
+                                              <p className="text-sm font-bold text-slate-800 group-hover:text-emerald-600 transition-colors">{itemValue.name}</p>
+                                              <span className={cn(
+                                                "text-[8px] font-black uppercase px-2 py-0.5 rounded-full border",
+                                                itemValue.type === 'Oral' ? "border-amber-200 text-amber-500" : (itemValue.type === 'Injection' ? "border-rose-200 text-rose-500" : "border-sky-200 text-sky-500")
+                                              )}>
+                                                {itemValue.type}
+                                              </span>
+                                            </div>
+                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Qty: {itemValue.quantity} • {itemValue.price} THB each</p>
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-6">
+                                          <span className="text-sm font-black text-slate-900">{(itemValue.price * itemValue.quantity).toLocaleString()} THB</span>
+                                          <div className="flex items-center gap-2">
+                                            <button 
+                                              type="button"
+                                              onClick={() => removeItem(itemValue.id, pet.patientId)}
+                                              className="p-2 text-slate-200 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
+                                            >
+                                              <Trash2 className="w-5 h-5" />
+                                            </button>
+                                          </div>
+                                        </div>
                                       </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
+                                    )
+                                  ))}
+                                </div>
                             </div>
                           ))}
                         </div>
@@ -3450,13 +3657,26 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                     }}
                                     className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all cursor-pointer text-emerald-600 bg-emerald-50/10"
                                   >
-                                    <option value="Eye">Eye Medicine (ยาใช้กับดวงตา)</option>
                                     <option value="Medicine">Medicine (ยาทั่วไป)</option>
+                                    <option value="ยากิน (เม็ด)">ยากิน (เม็ด)</option>
+                                    <option value="ยากิน (น้ำ)">ยากิน (น้ำ)</option>
+                                    <option value="ยาหยด">ยาหยด</option>
+                                    <option value="ยาฉีด">ยาฉีด</option>
+                                    <option value="ยาทา">ยาทา</option>
+                                    <option value="ยาหยอดตา">ยาหยอดตา</option>
+                                    <option value="ยาพ่น">ยาพ่น</option>
                                     <option value="Anti-parasite">Anti-parasite (ยาฆ่าพยาธิ)</option>
                                     <option value="Vaccine">Vaccine (ยาคุม/วัคซีน)</option>
+                                    <option value="Eye">Eye Medicine (ยาใช้กับดวงตา)</option>
                                     <option value="Supplies">Supplies (เวชภัณฑ์)</option>
                                     <option value="Food">Food (อาหาร)</option>
                                     <option value="Other">Other (อื่น ๆ)</option>
+                                    {newItem.category && ![
+                                      'Medicine', 'ยากิน (เม็ด)', 'ยากิน (น้ำ)', 'ยาหยด', 'ยาฉีด', 'ยาทา', 'ยาหยอดตา', 'ยาพ่น',
+                                      'Anti-parasite', 'Vaccine', 'Eye', 'Supplies', 'Food', 'Other'
+                                    ].includes(newItem.category) && (
+                                      <option value={newItem.category}>{newItem.category}</option>
+                                    )}
                                   </select>
                                 </div>
                               </div>
@@ -3846,12 +4066,25 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                     className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all cursor-pointer"
                                   >
                                     <option value="Medicine">Medicine (ยาทั่วไป)</option>
+                                    <option value="ยากิน (เม็ด)">ยากิน (เม็ด)</option>
+                                    <option value="ยากิน (น้ำ)">ยากิน (น้ำ)</option>
+                                    <option value="ยาหยด">ยาหยด</option>
+                                    <option value="ยาฉีด">ยาฉีด</option>
+                                    <option value="ยาทา">ยาทา</option>
+                                    <option value="ยาหยอดตา">ยาหยอดตา</option>
+                                    <option value="ยาพ่น">ยาพ่น</option>
                                     <option value="Anti-parasite">Anti-parasite (ยาฆ่าพยาธิ)</option>
                                     <option value="Vaccine">Vaccine (ยาคุม/วัคซีน)</option>
                                     <option value="Eye">Eye Medicine (ยาใช้กับดวงตา)</option>
                                     <option value="Supplies">Supplies (เวชภัณฑ์)</option>
                                     <option value="Food">Food (อาหาร)</option>
                                     <option value="Other">Other (อื่น ๆ)</option>
+                                    {newItem.category && ![
+                                      'Medicine', 'ยากิน (เม็ด)', 'ยากิน (น้ำ)', 'ยาหยด', 'ยาฉีด', 'ยาทา', 'ยาหยอดตา', 'ยาพ่น',
+                                      'Anti-parasite', 'Vaccine', 'Eye', 'Supplies', 'Food', 'Other'
+                                    ].includes(newItem.category) && (
+                                      <option value={newItem.category}>{newItem.category}</option>
+                                    )}
                                   </select>
                                 </div>
                               </div>
@@ -4136,12 +4369,25 @@ export default function OPDList({ setActiveView }: { setActiveView: (view: any) 
                                   className="w-full bg-slate-50/50 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all cursor-pointer"
                                 >
                                   <option value="Medicine">Medicine (ยาทั่วไป)</option>
+                                  <option value="ยากิน (เม็ด)">ยากิน (เม็ด)</option>
+                                  <option value="ยากิน (น้ำ)">ยากิน (น้ำ)</option>
+                                  <option value="ยาหยด">ยาหยด</option>
+                                  <option value="ยาฉีด">ยาฉีด</option>
+                                  <option value="ยาทา">ยาทา</option>
+                                  <option value="ยาหยอดตา">ยาหยอดตา</option>
+                                  <option value="ยาพ่น">ยาพ่น</option>
                                   <option value="Anti-parasite">Anti-parasite (ยาฆ่าพยาธิ)</option>
                                   <option value="Vaccine">Vaccine (ยาคุม/วัคซีน)</option>
                                   <option value="Eye">Eye Medicine (ยาใช้กับดวงตา)</option>
                                   <option value="Supplies">Supplies (เวชภัณฑ์)</option>
                                   <option value="Food">Food (อาหาร)</option>
                                   <option value="Other">Other (อื่น ๆ)</option>
+                                  {newItem.category && ![
+                                    'Medicine', 'ยากิน (เม็ด)', 'ยากิน (น้ำ)', 'ยาหยด', 'ยาฉีด', 'ยาทา', 'ยาหยอดตา', 'ยาพ่น',
+                                    'Anti-parasite', 'Vaccine', 'Eye', 'Supplies', 'Food', 'Other'
+                                  ].includes(newItem.category) && (
+                                    <option value={newItem.category}>{newItem.category}</option>
+                                  )}
                                 </select>
                               </div>
                               <div className="flex flex-col gap-1">

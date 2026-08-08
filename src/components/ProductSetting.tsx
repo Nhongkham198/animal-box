@@ -40,8 +40,10 @@ import {
   doc, 
   handleFirestoreError,
   OperationType,
-  serverTimestamp
+  serverTimestamp,
+  auth
 } from '../firebase';
+import { useAuth } from '../contexts/AuthContext';
 
 interface Product {
   id: string;
@@ -52,10 +54,17 @@ interface Product {
   initialStock: number;
   minStock: number;
   isInStock: boolean;
+  itemsPerPackage?: number;
   productType?: string;
   genericName?: string;
   barcode?: string;
   price?: number;
+  expiryDate?: string;
+  expiryDates?: string[];
+  updatedAt?: any;
+  updatedBy?: string;
+  createdAt?: any;
+  createdBy?: string;
   [key: string]: any;
 }
 
@@ -81,7 +90,6 @@ const PRODUCT_TYPES = [
   'Vaccine',
   'Medicine',
   'Supplies',
-  'Food',
   'Other'
 ];
 const UNITS = ['หลอด', 'ขวด', 'เม็ด', 'แผง', 'กล่อง', 'ถุง', 'กิโลกรัม', 'กรัม'];
@@ -105,10 +113,141 @@ const MEDICAL_USES = ['กิน', 'ทา', 'หยอดหู', 'หยอด
 const DOSAGE_UNITS = ['เม็ด', 'CC', 'ML', 'หยด', 'หลอด'];
 
 export default function ProductSetting() {
+  const { user } = useAuth();
+  const currentUserName = user?.displayName || user?.email?.split('@')[0] || auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'Wasu Nganken';
+
   const [mode, setMode] = useState<'list' | 'edit'>('list');
   const [products, setProducts] = useState<Product[]>([]);
   const [editingProduct, setEditingProduct] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+
+  const formatLastModifiedDate = (dateVal: any) => {
+    if (!dateVal) return null;
+    let d: Date | null = null;
+    if (typeof dateVal === 'object' && typeof dateVal.toDate === 'function') {
+      d = dateVal.toDate();
+    } else if (typeof dateVal === 'object' && dateVal.seconds) {
+      d = new Date(dateVal.seconds * 1000);
+    } else if (typeof dateVal === 'string' || typeof dateVal === 'number') {
+      d = new Date(dateVal);
+    }
+    if (!d || isNaN(d.getTime())) return null;
+
+    const dateStr = d.toLocaleDateString('th-TH', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
+    const timeStr = d.toLocaleTimeString('th-TH', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    return { dateStr, timeStr };
+  };
+
+  const parseExpiryDate = (dateVal: any): Date | null => {
+    if (!dateVal) return null;
+    if (typeof dateVal === 'object' && typeof dateVal.toDate === 'function') {
+      const d = dateVal.toDate();
+      return isNaN(d.getTime()) ? null : d;
+    }
+    if (typeof dateVal === 'object' && dateVal.seconds) {
+      const d = new Date(dateVal.seconds * 1000);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    if (dateVal instanceof Date) {
+      return isNaN(dateVal.getTime()) ? null : dateVal;
+    }
+    if (typeof dateVal === 'string') {
+      const cleaned = dateVal.trim();
+      if (!cleaned) return null;
+
+      if (/^\d{4}-\d{2}-\d{2}/.test(cleaned)) {
+        const d = new Date(cleaned);
+        return isNaN(d.getTime()) ? null : d;
+      }
+
+      const parts = cleaned.split(/[\/\-]/);
+      if (parts.length === 3) {
+        let m = parseInt(parts[0], 10);
+        let d = parseInt(parts[1], 10);
+        let y = parseInt(parts[2], 10);
+
+        if (m === 0) m = 1;
+        if (y < 100) y += 2000;
+
+        if (!isNaN(m) && !isNaN(d) && !isNaN(y) && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+          const dateObj = new Date(y, m - 1, d);
+          if (!isNaN(dateObj.getTime())) return dateObj;
+        }
+      }
+
+      const fallbackDate = new Date(cleaned);
+      if (!isNaN(fallbackDate.getTime())) return fallbackDate;
+    }
+    return null;
+  };
+
+  const formatExpiryDateForInput = (dateVal: any): string => {
+    const d = parseExpiryDate(dateVal);
+    if (!d) return '';
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  const formatExpiryDateDisplay = (dateVal: any): string | null => {
+    const d = parseExpiryDate(dateVal);
+    if (!d) {
+      if (typeof dateVal === 'string' && dateVal.trim()) return dateVal.trim();
+      return null;
+    }
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    return `${day}/${month}/${year}`;
+  };
+
+  const getExpiryStatus = (dateVal: any) => {
+    const d = parseExpiryDate(dateVal);
+    if (!d) return null;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const exp = new Date(d);
+    exp.setHours(0, 0, 0, 0);
+
+    const diffMs = exp.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 0) {
+      return {
+        isExpired: true,
+        isExpiringSoon: false,
+        daysRemaining: diffDays,
+        text: 'หมดอายุแล้ว',
+        badgeClass: 'bg-rose-500 text-white font-bold'
+      };
+    }
+    if (diffDays <= 14) {
+      return {
+        isExpired: false,
+        isExpiringSoon: true,
+        daysRemaining: diffDays,
+        text: diffDays === 0 ? 'หมดอายุวันนี้' : `หมดอายุใน ${diffDays} วัน`,
+        badgeClass: 'bg-amber-500 text-white font-bold'
+      };
+    }
+    return {
+      isExpired: false,
+      isExpiringSoon: false,
+      daysRemaining: diffDays,
+      text: null,
+      badgeClass: 'bg-emerald-50 text-emerald-700 font-medium'
+    };
+  };
 
   // Sync mode with Header back button
   useEffect(() => {
@@ -127,6 +266,19 @@ export default function ProductSetting() {
     };
   }, [mode]);
 
+  const isFoodItem = (i: any) => {
+    if (!i) return false;
+    if (i.isFood || i.type === 'food' || i.type === 'Food' || i.productType === 'food' || i.productType === 'Food') return true;
+    const cat = (i.category || '').toLowerCase();
+    const pType = (i.productType || i.type || '').toLowerCase();
+    const group = (i.activityGroup || '').toLowerCase();
+    const subGroup = (i.activitySubGroup || '').toLowerCase();
+    return pType === 'food' ||
+           cat.includes('อาหาร') || group.includes('อาหาร') || subGroup.includes('อาหาร') ||
+           cat.includes('นม') || group.includes('นม') || subGroup.includes('นม') ||
+           cat.includes('food') || group.includes('food');
+  };
+
   const getProductKey = (n: string, pkg?: string) => {
     const cleanN = (n || '').toLowerCase().trim();
     const cleanP = (pkg || '').toLowerCase().trim();
@@ -140,7 +292,7 @@ export default function ProductSetting() {
         id: doc.id,
         ...doc.data()
       })) as Product[];
-      setProducts(items);
+      setProducts(items.filter(item => !isFoodItem(item)));
       setLoading(false);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'inventory');
@@ -304,6 +456,8 @@ export default function ProductSetting() {
       initialStock: 0,
       currentStock: 0,
       minStock: 5,
+      itemsPerPackage: 1,
+      expiryDate: '',
       valueGroup: 'low',
       safetyStock: 0,
       leadTime: 0,
@@ -367,6 +521,7 @@ export default function ProductSetting() {
       initialStock: product.initialStock || 0,
       currentStock: product.currentStock || 0,
       minStock: product.minStock || 0,
+      expiryDate: product.expiryDate || (product.expiryDates && product.expiryDates.length > 0 ? product.expiryDates[0] : ''),
       barcode: product.barcode || '',
       valueGroup: product.valueGroup || 'low',
       safetyStock: product.safetyStock || 0,
@@ -521,7 +676,8 @@ export default function ProductSetting() {
         minStockUnit: editingProduct.minStockUnit || editingProduct.stockUnit || editingProduct.packageUnit || editingProduct.unit || '',
         costPrice: typeof editingProduct.costPrice === 'number' ? editingProduct.costPrice : (parseFloat(editingProduct.costPrice) || 0),
         price: typeof editingProduct.price === 'number' ? editingProduct.price : (parseFloat(editingProduct.price) || 0),
-        updatedAt: serverTimestamp()
+        updatedAt: serverTimestamp(),
+        updatedBy: currentUserName
       };
 
       // If it's a new product (no ID exists in a way that implies creation or we want to force it)
@@ -533,7 +689,8 @@ export default function ProductSetting() {
         await addDoc(collection(db, 'inventory'), {
           ...dataToSave,
           isInStock: true,
-          createdAt: serverTimestamp()
+          createdAt: serverTimestamp(),
+          createdBy: currentUserName
         });
       } else {
         const { id, ...dataToUpdate } = productData;
@@ -556,7 +713,8 @@ export default function ProductSetting() {
     try {
       await updateDoc(doc(db, 'inventory', product.id), {
         isInStock: !product.isInStock,
-        updatedAt: serverTimestamp()
+        updatedAt: serverTimestamp(),
+        updatedBy: currentUserName
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `inventory/${product.id}`);
@@ -634,34 +792,48 @@ export default function ProductSetting() {
             price: finalPrice,
             type: item.type || existingDbProduct.type || 'Other',
             productType: item.type || existingDbProduct.productType || 'Other',
+            itemsPerPackage: item.itemsPerPackage || existingDbProduct.itemsPerPackage || 1,
             unit: item.unit || existingDbProduct.unit || 'หน่วย',
             packageUnit: item.packageUnit || existingDbProduct.packageUnit || '',
+            stockUnit: item.stockUnit || existingDbProduct.stockUnit || item.packageUnit || item.unit || 'หน่วย',
+            initialStockUnit: item.stockUnit || existingDbProduct.initialStockUnit || item.packageUnit || item.unit || 'หน่วย',
+            minStockUnit: item.stockUnit || existingDbProduct.minStockUnit || item.packageUnit || item.unit || 'หน่วย',
             activityGroup: item.activityGroup || existingDbProduct.activityGroup || '',
             activitySubGroup: item.activitySubGroup || existingDbProduct.activitySubGroup || '',
             drugLabel: {
               ...(existingDbProduct.drugLabel || { enabled: true }),
               medicalUse: item.medicalUse || existingDbProduct.drugLabel?.medicalUse || ''
             },
-            updatedAt: serverTimestamp()
+            expiryDate: (item.expiryDates && item.expiryDates.length > 0) ? item.expiryDates[0] : (existingDbProduct.expiryDate || ''),
+            expiryDates: (item.expiryDates && item.expiryDates.length > 0) ? item.expiryDates : (existingDbProduct.expiryDates || []),
+            updatedAt: serverTimestamp(),
+            updatedBy: currentUserName
           });
           successCount++;
           continue;
         }
 
+        const stockUnitToSave = item.stockUnit || item.packageUnit || item.unit || 'หน่วย';
         await addDoc(collection(db, 'inventory'), {
           name: item.name,
           type: item.type,
           productType: item.type,
           unit: item.unit,
           packageUnit: item.packageUnit || '',
+          stockUnit: stockUnitToSave,
+          initialStockUnit: stockUnitToSave,
+          minStockUnit: stockUnitToSave,
           costPrice: item.costPrice || 0,
           price: item.price || 0,
           currentStock: item.currentStock,
           initialStock: item.currentStock,
           minStock: 5,
+          itemsPerPackage: item.itemsPerPackage || 1,
           isInStock: item.currentStock > 0,
           activityGroup: item.activityGroup,
           activitySubGroup: item.activitySubGroup || '',
+          expiryDate: (item.expiryDates && item.expiryDates.length > 0) ? item.expiryDates[0] : '',
+          expiryDates: item.expiryDates || [],
           drugLabel: {
             enabled: true,
             medicalUse: item.medicalUse,
@@ -679,7 +851,9 @@ export default function ProductSetting() {
             additional: ''
           },
           createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
+          createdBy: currentUserName,
+          updatedAt: serverTimestamp(),
+          updatedBy: currentUserName
         });
         successCount++;
       }
@@ -719,6 +893,8 @@ export default function ProductSetting() {
           type: string;
           unit: string;
           packageUnit: string;
+          stockUnit: string;
+          itemsPerPackage?: number;
           costPrice: number;
           price: number;
           currentStock: number;
@@ -738,6 +914,7 @@ export default function ProductSetting() {
           let lastProductName = '';
           let lastUnit = '';
           let lastPackageUnit = '';
+          let lastStockUnit = '';
           let lastCost = 0;
           let lastPrice = 0;
 
@@ -764,17 +941,19 @@ export default function ProductSetting() {
               return match ? parseFloat(match[0]) : 0;
             };
 
-            const isColEDate = rawColE.includes('/') || rawColE.includes('-') || !isNaN(Date.parse(rawColE));
+            const isColEDate = (rawColE.includes('/') || rawColE.includes('-')) && isNaN(Number(rawColE));
 
             let qty = 0;
             let cost = 0;
             let price = 0;
             let expiryDateVal = rawColF;
+            let qtyRawStr = rawColE;
 
-            if (isColEDate || (!rawColF && rawColD !== '' && !isNaN(Number(rawColD)))) {
+            if (isColEDate) {
               // Food Excel Format: Col C = Selling Price (ราคาขาย), Col D = Stock (จำนวนคงเหลือ), Col E = Expiry Date (วันหมดอายุ)
               price = cleanNumber(rawColC);
               qty = cleanNumber(rawColD);
+              qtyRawStr = rawColD;
               expiryDateVal = rawColE;
               cost = cleanNumber(rawColF);
             } else {
@@ -782,13 +961,17 @@ export default function ProductSetting() {
               cost = cleanNumber(rawColC);
               price = cleanNumber(rawColD);
               qty = cleanNumber(rawColE);
+              qtyRawStr = rawColE;
             }
 
             let productName = rawColA;
             const parsedUnit = extractUnitName(rawColB);
             const parsedPackageUnit = extractPackageUnit(rawColB);
+            const extractedStockUnit = qtyRawStr ? qtyRawStr.replace(/^[0-9\s.,]+/, '').trim() : '';
+
             let unit = parsedUnit || lastUnit;
             let packageUnit = parsedPackageUnit || lastPackageUnit;
+            let stockUnit = extractedStockUnit || packageUnit || unit || lastStockUnit || 'หน่วย';
 
             if (!productName) {
               if (lastProductName && (qty > 0 || rawColF)) {
@@ -800,6 +983,7 @@ export default function ProductSetting() {
               lastProductName = productName;
               if (unit) lastUnit = unit;
               if (packageUnit) lastPackageUnit = packageUnit;
+              if (stockUnit) lastStockUnit = stockUnit;
               if (cost > 0) lastCost = cost;
               if (price > 0) lastPrice = price;
             }
@@ -809,9 +993,12 @@ export default function ProductSetting() {
 
             const finalCost = cost > 0 ? cost : (existing?.costPrice || lastCost);
             const finalPrice = price > 0 ? price : (existing?.price || lastPrice);
+            const ratioMatch = rawColB.match(/(\d+)/);
+            const itemsPerPackage = ratioMatch ? parseInt(ratioMatch[1]) : 1;
 
             if (existing) {
               existing.currentStock += qty;
+              if (extractedStockUnit) existing.stockUnit = extractedStockUnit;
               if (rawColF) existing.expiryDates.push(rawColF);
             } else {
               importedProductsMap.set(key, {
@@ -819,6 +1006,8 @@ export default function ProductSetting() {
                 type: currentCategory,
                 unit: unit || 'หน่วย',
                 packageUnit: packageUnit || '',
+                stockUnit: stockUnit,
+                itemsPerPackage: itemsPerPackage,
                 costPrice: finalCost,
                 price: finalPrice,
                 currentStock: qty,
@@ -1005,7 +1194,7 @@ export default function ProductSetting() {
                   />
                 </div>
                 {(() => {
-                  const defaultBaseUnit = editingProduct?.packageUnit || editingProduct?.unit || 'หน่วย';
+                  const defaultBaseUnit = editingProduct?.stockUnit || editingProduct?.packageUnit || editingProduct?.unit || 'หน่วย';
                   const initialStockUnit = editingProduct?.initialStockUnit || defaultBaseUnit;
                   const currentStockUnit = editingProduct?.stockUnit || defaultBaseUnit;
                   const minStockUnit = editingProduct?.minStockUnit || currentStockUnit;
@@ -1082,6 +1271,60 @@ export default function ProductSetting() {
                           />
                           {renderUnitSelect(minStockUnit, 'minStockUnit')}
                         </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">
+                          อัตราการบรรจุ (จำนวนต่อบรรจุภัณฑ์)
+                        </label>
+                        <div className="relative">
+                          <input 
+                            type="number"
+                            min="1"
+                            placeholder="1"
+                            value={editingProduct.itemsPerPackage ?? 1}
+                            onChange={(e) => setEditingProduct({ ...editingProduct, itemsPerPackage: parseInt(e.target.value) || 1 })}
+                            className="w-full px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/50 outline-none font-medium text-slate-700 focus:ring-2 focus:ring-[#00b4d8]"
+                          />
+                        </div>
+                        <p className="mt-1 text-[10px] text-slate-400 italic">
+                          *เช่น 10 (10 เม็ด/แผง) เพื่อใช้แปลงตัดสต๊อกเวลากินหรือจ่ายยา
+                        </p>
+                      </div>
+                      <div className="md:col-span-1">
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="block text-sm font-bold text-slate-700">
+                            วันหมดอายุ (Expiry Date)
+                          </label>
+                          {editingProduct.expiryDate && (() => {
+                            const status = getExpiryStatus(editingProduct.expiryDate);
+                            if (status?.isExpired) {
+                              return (
+                                <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-rose-500 text-white font-bold animate-pulse">
+                                  <AlertTriangle className="w-3 h-3" /> หมดอายุแล้ว
+                                </span>
+                              );
+                            }
+                            if (status?.isExpiringSoon) {
+                              return (
+                                <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-amber-500 text-white font-bold animate-pulse">
+                                  <Clock className="w-3 h-3" /> หมดอายุใน {status.daysRemaining} วัน
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </div>
+                        <div className="relative">
+                          <input 
+                            type="date"
+                            value={formatExpiryDateForInput(editingProduct.expiryDate)}
+                            onChange={(e) => setEditingProduct({ ...editingProduct, expiryDate: e.target.value })}
+                            className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white outline-none font-medium text-slate-700 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 transition-all"
+                          />
+                        </div>
+                        <p className="mt-1 text-[10px] text-slate-400 italic">
+                          *แจ้งเตือนเมื่อใกล้หมดอายุล่วงหน้า 14 วัน
+                        </p>
                       </div>
                     </>
                   );
@@ -2082,6 +2325,8 @@ export default function ProductSetting() {
                 <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-center w-20">No.</th>
                 <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider">Product Name</th>
                 <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-center">Type</th>
+                <th className="px-4 py-4 font-bold text-slate-400 uppercase tracking-wider text-center">แก้ไขล่าสุด</th>
+                <th className="px-4 py-4 font-bold text-slate-400 uppercase tracking-wider text-center">ผู้แก้ไข</th>
                 <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-right pr-12">ราคา(บาท)</th>
                 <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-right pr-10 text-[#00b4d8]">QTY</th>
                 <th className="px-6 py-4 font-bold text-slate-400 uppercase tracking-wider text-center">Is in Stock</th>
@@ -2107,7 +2352,7 @@ export default function ProductSetting() {
             <tbody className="divide-y divide-slate-50">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center">
+                  <td colSpan={9} className="px-6 py-12 text-center">
                     <RefreshCw className="w-6 h-6 text-[#00b4d8] animate-spin mx-auto mb-2" />
                     <p className="text-slate-400 font-bold">Loading Products...</p>
                   </td>
@@ -2116,15 +2361,68 @@ export default function ProductSetting() {
                 <tr key={product.id} className="hover:bg-slate-50/50 transition-colors group">
                   <td className="px-6 py-4 text-center font-medium text-slate-500">{index + 1}</td>
                   <td className="px-6 py-4">
-                    <div className="font-bold text-slate-700">{product.name}</div>
-                    {product.genericName && (
-                      <div className="text-xs text-slate-400 font-normal">{product.genericName}</div>
-                    )}
+                    <div className="font-bold text-slate-700 flex items-center gap-2 flex-wrap">
+                      <span>{product.name}</span>
+                      {(() => {
+                        const expVal = product.expiryDate || (product.expiryDates && product.expiryDates.length > 0 ? product.expiryDates[0] : null);
+                        const status = getExpiryStatus(expVal);
+                        if (status?.isExpired) {
+                          return (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold shadow-xs">
+                              <AlertTriangle className="w-3 h-3" /> หมดอายุแล้ว
+                            </span>
+                          );
+                        }
+                        if (status?.isExpiringSoon) {
+                          return (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold shadow-xs">
+                              <Clock className="w-3 h-3" /> หมดอายุใน {status.daysRemaining} วัน
+                            </span>
+                          );
+                        }
+                        return null;
+                      })()}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-slate-400 font-normal mt-0.5 flex-wrap">
+                      {product.genericName && <span>{product.genericName}</span>}
+                      {(() => {
+                        const expVal = product.expiryDate || (product.expiryDates && product.expiryDates.length > 0 ? product.expiryDates[0] : null);
+                        const formattedExp = formatExpiryDateDisplay(expVal);
+                        if (!formattedExp) return null;
+                        return (
+                          <span className="inline-flex items-center gap-1 text-[11px] text-slate-600 font-medium bg-slate-100 px-2 py-0.5 rounded-md">
+                            <Calendar className="w-3 h-3 text-slate-400" /> Exp: {formattedExp}
+                          </span>
+                        );
+                      })()}
+                    </div>
                   </td>
                   <td className="px-6 py-4 text-center text-slate-700 font-medium">
                     <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-semibold">
                       {product.productType || product.type || '-'}
                     </span>
+                  </td>
+                  <td className="px-4 py-4 text-center">
+                    {(() => {
+                      const formatted = formatLastModifiedDate(product.updatedAt || product.createdAt);
+                      if (!formatted) {
+                        return <span className="text-xs text-slate-400 font-medium">-</span>;
+                      }
+                      return (
+                        <div className="flex flex-col items-center justify-center text-xs">
+                          <span className="font-semibold text-slate-700 tabular-nums">{formatted.dateStr}</span>
+                          <span className="text-[10px] text-slate-400 font-medium tabular-nums">{formatted.timeStr} น.</span>
+                        </div>
+                      );
+                    })()}
+                  </td>
+                  <td className="px-4 py-4 text-center">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-cyan-50/70 text-[#007791] border border-cyan-100 rounded-full text-xs font-semibold max-w-[140px] mx-auto">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#00b4d8] shrink-0" />
+                      <span className="truncate" title={product.updatedBy || product.updatedByName || product.createdBy || 'Wasu Nganken'}>
+                        {product.updatedBy || product.updatedByName || product.createdBy || 'Wasu Nganken'}
+                      </span>
+                    </div>
                   </td>
                   <td className="px-6 py-4 text-right pr-12">
                     <div className="font-black text-slate-800 text-base tabular-nums">
@@ -2196,7 +2494,7 @@ export default function ProductSetting() {
                 </tr>
               )) : (
                 <tr>
-                   <td colSpan={6} className="px-6 py-12 text-center">
+                   <td colSpan={9} className="px-6 py-12 text-center">
                     <p className="text-slate-400 font-bold">No products found. Create or import your first product!</p>
                   </td>
                 </tr>

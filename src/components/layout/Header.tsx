@@ -274,6 +274,7 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack, o
   const routeInfo = VIEW_LABELS[location.pathname] || { title: activeView.replace(/-/g, ' ') };
 
   const isProductOrFoodSetting = location.pathname === '/settings/product' || location.pathname === '/settings/food';
+  const isProductSettingPage = location.pathname === '/settings/product' || location.pathname.startsWith('/settings/product') || activeView === 'settings-product' || activeView === 'product';
   const shouldShowBack = isProductOrFoodSetting ? (productSettingMode === 'edit') : canGoBack;
 
   const handleBackClick = () => {
@@ -323,98 +324,100 @@ export default function Header({ activeView, setActiveView, onBack, canGoBack, o
       </div>
 
       <div className="flex items-center gap-4">
-        <div className="hidden md:flex items-center relative" ref={searchRef}>
-          <div className="flex items-center bg-slate-100 rounded-xl px-4 py-2 gap-2 border border-slate-200 w-80">
-            <Search className="w-4 h-4 text-slate-400" />
-            <input 
-              type="text" 
-              placeholder="Search by Pet, HN, Owner or Phone..." 
-              value={globalSearchQuery}
-              onChange={(e) => handleGlobalSearch(e.target.value)}
-              onFocus={() => globalSearchQuery.length >= 2 && setShowSearchResults(true)}
-              className="bg-transparent border-none focus:ring-0 text-sm w-full outline-none"
-            />
-            {isGlobalSearching && (
-              <div className="w-4 h-4 border-2 border-[#00b4d8] border-t-transparent rounded-full animate-spin" />
-            )}
+        {!isProductSettingPage && (
+          <div className="hidden md:flex items-center relative" ref={searchRef}>
+            <div className="flex items-center bg-slate-100 rounded-xl px-4 py-2 gap-2 border border-slate-200 w-80">
+              <Search className="w-4 h-4 text-slate-400" />
+              <input 
+                type="text" 
+                placeholder="Search by Pet, HN, Owner or Phone..." 
+                value={globalSearchQuery}
+                onChange={(e) => handleGlobalSearch(e.target.value)}
+                onFocus={() => globalSearchQuery.length >= 2 && setShowSearchResults(true)}
+                className="bg-transparent border-none focus:ring-0 text-sm w-full outline-none"
+              />
+              {isGlobalSearching && (
+                <div className="w-4 h-4 border-2 border-[#00b4d8] border-t-transparent rounded-full animate-spin" />
+              )}
+            </div>
+
+            <AnimatePresence>
+              {showSearchResults && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10 }}
+                  className="absolute top-full left-0 mt-2 w-[400px] bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden"
+                >
+                  <div className="p-4 bg-slate-50 border-b border-slate-100">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Search Results</p>
+                  </div>
+                  
+                  <div className="max-h-[400px] overflow-y-auto">
+                    {globalSearchResults.patients.length > 0 && (
+                      <div className="p-2">
+                        <p className="px-3 py-2 text-[10px] font-black text-[#00b4d8] uppercase tracking-widest">Patients</p>
+                        {globalSearchResults.patients.map(p => (
+                          <button
+                            key={p.id}
+                            onClick={() => {
+                              setActiveView('patients');
+                              setShowSearchResults(false);
+                              setGlobalSearchQuery('');
+                            }}
+                            className="w-full p-3 text-left hover:bg-slate-50 rounded-xl flex items-center gap-3 transition-colors"
+                          >
+                            <div className="w-10 h-10 bg-rose-50 rounded-lg flex items-center justify-center text-rose-600">
+                              <PawPrint className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-slate-800">{p.name}</p>
+                              <p className="text-[10px] text-slate-400 font-bold uppercase truncate max-w-[200px]">
+                                HN: {p.hn} • {p.displayOwnerName || 'No owner'}
+                              </p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {globalSearchResults.inventory.length > 0 && (
+                      <div className="p-2 border-t border-slate-50">
+                        <p className="px-3 py-2 text-[10px] font-black text-[#00b4d8] uppercase tracking-widest">Inventory</p>
+                        {globalSearchResults.inventory.map(i => (
+                          <button
+                            key={i.id}
+                            onClick={() => {
+                              setActiveView('inventory');
+                              setShowSearchResults(false);
+                              setGlobalSearchQuery('');
+                            }}
+                            className="w-full p-3 text-left hover:bg-slate-50 rounded-xl flex items-center gap-3 transition-colors"
+                          >
+                            <div className="w-10 h-10 bg-amber-50 rounded-lg flex items-center justify-center text-amber-600">
+                              <Package className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-slate-800">{i.itemName}</p>
+                              <p className="text-[10px] text-slate-400 font-bold uppercase">Stock: {i.quantity} • {i.unitPrice} ฿</p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {globalSearchResults.patients.length === 0 && globalSearchResults.inventory.length === 0 && !isGlobalSearching && (
+                      <div className="p-8 text-center text-slate-400">
+                        <Search className="w-8 h-8 mx-auto mb-2 opacity-20" />
+                        <p className="text-xs font-bold uppercase tracking-widest">No results found</p>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-
-          <AnimatePresence>
-            {showSearchResults && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 10 }}
-                className="absolute top-full left-0 mt-2 w-[400px] bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden"
-              >
-                <div className="p-4 bg-slate-50 border-b border-slate-100">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Search Results</p>
-                </div>
-                
-                <div className="max-h-[400px] overflow-y-auto">
-                  {globalSearchResults.patients.length > 0 && (
-                    <div className="p-2">
-                      <p className="px-3 py-2 text-[10px] font-black text-[#00b4d8] uppercase tracking-widest">Patients</p>
-                      {globalSearchResults.patients.map(p => (
-                        <button
-                          key={p.id}
-                          onClick={() => {
-                            setActiveView('patients');
-                            setShowSearchResults(false);
-                            setGlobalSearchQuery('');
-                          }}
-                          className="w-full p-3 text-left hover:bg-slate-50 rounded-xl flex items-center gap-3 transition-colors"
-                        >
-                          <div className="w-10 h-10 bg-rose-50 rounded-lg flex items-center justify-center text-rose-600">
-                            <PawPrint className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <p className="text-sm font-bold text-slate-800">{p.name}</p>
-                            <p className="text-[10px] text-slate-400 font-bold uppercase truncate max-w-[200px]">
-                              HN: {p.hn} • {p.displayOwnerName || 'No owner'}
-                            </p>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {globalSearchResults.inventory.length > 0 && (
-                    <div className="p-2 border-t border-slate-50">
-                      <p className="px-3 py-2 text-[10px] font-black text-[#00b4d8] uppercase tracking-widest">Inventory</p>
-                      {globalSearchResults.inventory.map(i => (
-                        <button
-                          key={i.id}
-                          onClick={() => {
-                            setActiveView('inventory');
-                            setShowSearchResults(false);
-                            setGlobalSearchQuery('');
-                          }}
-                          className="w-full p-3 text-left hover:bg-slate-50 rounded-xl flex items-center gap-3 transition-colors"
-                        >
-                          <div className="w-10 h-10 bg-amber-50 rounded-lg flex items-center justify-center text-amber-600">
-                            <Package className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <p className="text-sm font-bold text-slate-800">{i.itemName}</p>
-                            <p className="text-[10px] text-slate-400 font-bold uppercase">Stock: {i.quantity} • {i.unitPrice} ฿</p>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {globalSearchResults.patients.length === 0 && globalSearchResults.inventory.length === 0 && !isGlobalSearching && (
-                    <div className="p-8 text-center text-slate-400">
-                      <Search className="w-8 h-8 mx-auto mb-2 opacity-20" />
-                      <p className="text-xs font-bold uppercase tracking-widest">No results found</p>
-                    </div>
-                  )}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+        )}
         
         <div className="relative" ref={dropdownRef}>
           <button 

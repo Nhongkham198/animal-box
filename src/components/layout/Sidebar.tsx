@@ -146,7 +146,7 @@ export default function Sidebar({
             )}
           </button>
           {(isOpen || isDrawer) && (
-            <div className="flex items-center gap-3 min-w-0">
+            <div className="flex items-center gap-2.5 min-w-0 flex-1 overflow-hidden">
               <div className="w-10 h-10 bg-white rounded-xl p-1 flex items-center justify-center overflow-hidden shadow-sm shrink-0">
                 <img 
                   src={clinicLogo} 
@@ -159,7 +159,12 @@ export default function Sidebar({
                   }}
                 />
               </div>
-              <span className="font-bold text-lg text-white tracking-tight leading-tight truncate">{clinicName}</span>
+              <div className="overflow-hidden whitespace-nowrap flex-1 min-w-0 relative py-1">
+                <div className="animate-marquee whitespace-nowrap font-bold text-base text-white tracking-tight leading-tight">
+                  <span className="pr-8">{clinicName}</span>
+                  <span className="pr-8">{clinicName}</span>
+                </div>
+              </div>
             </div>
           )}
         </div>

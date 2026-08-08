@@ -177,53 +177,66 @@ export default function Inventory() {
     return STOCK_LEVELS.NORMAL;
   };
 
+  const isItemInCategory = (i: InventoryItem, cat: string): boolean => {
+    if (cat === 'ALL' || cat === 'All' || cat === 'ทั้งหมด') return true;
+
+    const rawGroup = i.activityGroup || i.productType || i.type || i.category || '';
+    const itemGroup = rawGroup.toLowerCase();
+    const catLower = cat.toLowerCase();
+
+    // Direct match or exact match
+    if (itemGroup === catLower || rawGroup === cat) return true;
+
+    if (cat === 'ยากิน (เม็ด)') {
+      return itemGroup.includes('ยากิน (เม็ด)') || (itemGroup.includes('กิน') && (itemGroup.includes('เม็ด') || !itemGroup.includes('น้ำ'))) || itemGroup.includes('oral medicine') || itemGroup.includes('ยาเม็ด');
+    } else if (cat === 'ยากิน (น้ำ)') {
+      return itemGroup.includes('ยากิน (น้ำ)') || itemGroup.includes('น้ำ') || itemGroup.includes('syrup') || (itemGroup.includes('กิน') && itemGroup.includes('น้ำ'));
+    } else if (cat === 'ยาหยด') {
+      return itemGroup.includes('หยด') || itemGroup.includes('spot-on') || itemGroup.includes('spot on');
+    } else if (cat === 'ยาฉีด') {
+      return itemGroup.includes('ฉีด') || itemGroup.includes('inject');
+    } else if (cat === 'ยาทา') {
+      return itemGroup.includes('ทา') || itemGroup.includes('topical');
+    } else if (cat === 'ยาหยอดตา') {
+      return itemGroup.includes('ตา') || itemGroup.includes('eye');
+    } else if (cat === 'ยาพ่น') {
+      return itemGroup.includes('พ่น') || itemGroup.includes('spray');
+    } else if (cat === 'ANTI-PARASITE') {
+      return itemGroup.includes('anti-parasite') || itemGroup.includes('parasite') || itemGroup.includes('พยาธิ');
+    } else if (cat === 'VACCINE') {
+      return itemGroup.includes('vaccine') || itemGroup.includes('วัคซีน');
+    } else if (cat === 'MEDICINE') {
+      return itemGroup.includes('medicine') || itemGroup.includes('ยา');
+    } else if (cat === 'SUPPLIES') {
+      return itemGroup.includes('supplies') || itemGroup.includes('เวชภัณฑ์');
+    } else if (cat === 'FOOD') {
+      return itemGroup.includes('food') || itemGroup.includes('อาหาร');
+    } else if (cat === 'OTHER') {
+      return itemGroup.includes('other') || itemGroup.includes('อื่นๆ');
+    }
+
+    return false;
+  };
+
   const filteredItems = items.filter(i => {
-    const matchesSearch = (i.name || i.itemName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         (i.barcode && i.barcode.includes(searchQuery));
+    const q = searchQuery.toLowerCase().trim();
+    const matchesSearch = !q || (i.name || i.itemName || '').toLowerCase().includes(q) ||
+                         (i.barcode && i.barcode.includes(q));
 
     if (activeCategory === 'ALL' || activeCategory === 'All' || activeCategory === 'ทั้งหมด') {
       return matchesSearch;
     }
 
-    const rawGroup = i.activityGroup || i.productType || i.type || i.category || '';
-    const itemGroup = rawGroup.toLowerCase();
-    const catLower = activeCategory.toLowerCase();
-
-    // Direct match or exact match
-    let matchesCategory = itemGroup === catLower || rawGroup === activeCategory;
-
-    if (!matchesCategory) {
-      if (activeCategory === 'ยากิน (เม็ด)') {
-        matchesCategory = itemGroup.includes('ยากิน (เม็ด)') || (itemGroup.includes('กิน') && (itemGroup.includes('เม็ด') || !itemGroup.includes('น้ำ'))) || itemGroup.includes('oral medicine') || itemGroup.includes('ยาเม็ด');
-      } else if (activeCategory === 'ยากิน (น้ำ)') {
-        matchesCategory = itemGroup.includes('ยากิน (น้ำ)') || itemGroup.includes('น้ำ') || itemGroup.includes('syrup') || (itemGroup.includes('กิน') && itemGroup.includes('น้ำ'));
-      } else if (activeCategory === 'ยาหยด') {
-        matchesCategory = itemGroup.includes('หยด') || itemGroup.includes('spot-on') || itemGroup.includes('spot on');
-      } else if (activeCategory === 'ยาฉีด') {
-        matchesCategory = itemGroup.includes('ฉีด') || itemGroup.includes('inject');
-      } else if (activeCategory === 'ยาทา') {
-        matchesCategory = itemGroup.includes('ทา') || itemGroup.includes('topical');
-      } else if (activeCategory === 'ยาหยอดตา') {
-        matchesCategory = itemGroup.includes('ตา') || itemGroup.includes('eye');
-      } else if (activeCategory === 'ยาพ่น') {
-        matchesCategory = itemGroup.includes('พ่น') || itemGroup.includes('spray');
-      } else if (activeCategory === 'ANTI-PARASITE') {
-        matchesCategory = itemGroup.includes('anti-parasite') || itemGroup.includes('parasite') || itemGroup.includes('พยาธิ');
-      } else if (activeCategory === 'VACCINE') {
-        matchesCategory = itemGroup.includes('vaccine') || itemGroup.includes('วัคซีน');
-      } else if (activeCategory === 'MEDICINE') {
-        matchesCategory = itemGroup.includes('medicine') || itemGroup.includes('ยา');
-      } else if (activeCategory === 'SUPPLIES') {
-        matchesCategory = itemGroup.includes('supplies') || itemGroup.includes('เวชภัณฑ์');
-      } else if (activeCategory === 'FOOD') {
-        matchesCategory = itemGroup.includes('food') || itemGroup.includes('อาหาร');
-      } else if (activeCategory === 'OTHER') {
-        matchesCategory = itemGroup.includes('other') || itemGroup.includes('อื่นๆ');
-      }
-    }
-
-    return matchesSearch && matchesCategory;
+    return matchesSearch && isItemInCategory(i, activeCategory);
   });
+
+  const searchedMatchingCategories = searchQuery.trim() ? new Set(
+    items.filter(i => {
+      const q = searchQuery.toLowerCase().trim();
+      return (i.name || i.itemName || '').toLowerCase().includes(q) ||
+             (i.barcode && i.barcode.includes(q));
+    }).flatMap(i => categories.filter(c => c !== 'ALL' && c !== 'All' && c !== 'ทั้งหมด' && isItemInCategory(i, c)))
+  ) : new Set<string>();
 
   const getItemPrice = (item: InventoryItem): number => {
     if (typeof item.unitPrice === 'number' && item.unitPrice > 0) return item.unitPrice;
@@ -417,33 +430,62 @@ export default function Inventory() {
 
       {/* Controls & Search */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-        <div className="flex items-center gap-1 bg-slate-100 p-1.5 rounded-2xl w-full lg:w-fit overflow-x-auto no-scrollbar">
-          {categories.map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setActiveCategory(cat)}
-              className={cn(
-                "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap",
-                activeCategory === cat 
-                  ? "bg-white text-[#00b4d8] shadow-sm" 
-                  : "text-slate-400 hover:text-slate-600"
-              )}
-            >
-              {cat}
-            </button>
-          ))}
+        <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl w-full lg:w-fit overflow-x-auto no-scrollbar">
+          {categories.map((cat) => {
+            const isSelected = activeCategory === cat;
+            const isSearchedCategory = searchedMatchingCategories.has(cat);
+
+            return (
+              <button
+                key={cat}
+                onClick={() => setActiveCategory(cat)}
+                className={cn(
+                  "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap relative flex items-center gap-2",
+                  isSelected 
+                    ? "bg-white text-[#00b4d8] shadow-sm border border-slate-200/60" 
+                    : isSearchedCategory
+                      ? "bg-[#00b4d8]/20 text-[#00b4d8] border-2 border-[#00b4d8] font-black shadow-md ring-2 ring-[#00b4d8]/30 animate-pulse"
+                      : "text-slate-400 hover:text-slate-600"
+                )}
+              >
+                {cat}
+                {isSearchedCategory && (
+                  <span className="flex h-2 w-2 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00b4d8] opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00b4d8]"></span>
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="bg-white px-5 py-3 rounded-2xl border border-slate-200 flex items-center gap-3 w-full lg:w-80 group focus-within:border-[#00b4d8] transition-all">
-            <Search className="w-4 h-4 text-slate-400" />
-            <input 
-              type="text" 
-              placeholder="Search by Name or Barcode..." 
-              className="bg-transparent border-none focus:ring-0 text-sm font-bold text-slate-700 w-full placeholder:text-slate-300"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-            />
+          <div className="relative">
+            <div className="bg-white px-5 py-3 rounded-2xl border border-slate-200 flex items-center gap-3 w-full lg:w-80 group focus-within:border-[#00b4d8] transition-all">
+              <Search className="w-4 h-4 text-slate-400" />
+              <input 
+                type="text" 
+                placeholder="Search by Name or Barcode..." 
+                className="bg-transparent border-none focus:ring-0 text-sm font-bold text-slate-700 w-full placeholder:text-slate-300"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+              />
+            </div>
+            {searchQuery.trim() && searchedMatchingCategories.size > 0 && (
+              <div className="absolute top-full left-0 mt-1 z-20 flex items-center gap-1.5 bg-sky-50 border border-sky-200 px-3 py-1 rounded-xl shadow-md">
+                <span className="text-[10px] font-bold text-slate-500 whitespace-nowrap">พบในกลุ่ม:</span>
+                {Array.from(searchedMatchingCategories).map(cat => (
+                  <button
+                    key={`search-badge-${cat}`}
+                    onClick={() => setActiveCategory(cat)}
+                    className="px-2 py-0.5 bg-[#00b4d8] text-white text-[10px] font-bold rounded-lg hover:bg-[#0096c7] transition-all whitespace-nowrap"
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           
           <input 
